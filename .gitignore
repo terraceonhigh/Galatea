@@ -2,6 +2,9 @@
 .DS_Store
 .commitmsg.tmp
 
+# Built CLI binary (built ad hoc with `go build ./cmd/galatea`)
+/galatea
+
 # Local-only working clones of third-party FOSS repositories. Daedalus
 # reads and lifts from these; they do not enter Galatea's git tree.
 # The README is tracked; the actual clones are not.
