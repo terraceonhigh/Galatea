@@ -307,3 +307,41 @@ named.
 or empirical evidence at R1 that the NFSv4 substrate doesn't dodge the timeout
 class — which would invalidate the architecture under the goal and force a
 rethink before R2. That is exactly why R1 is first.
+
+---
+
+## DEC-009 — R1 is privilege-gated in this environment; re-slice to build R2+R3 first, accept the bounded risk
+
+**Date:** 2026-05-29 · **Status:** accepted
+
+**Decision.** R1 (measure that NFSv4 dodges the macOS NFS-client RPC-timeout
+class) cannot be run here. It requires a real macOS *kernel* NFS mount, which
+requires root; this session is uid 501 with no non-interactive sudo. A userspace
+NFSv4 client (pynfs) cannot stand in — the timeout is a property of the kernel
+client, not the protocol. So R1 is **blocked, gated on the Architect / a
+privileged real-Mac context.**
+
+Rather than stop the whole run at the first privileged wall, **re-slice**: build
+**R2 (server lift)** and **R3 (serve over a loopback socket, drive with a
+userspace NFSv4 client)** now — both are pure-userspace, no-privilege, and
+CLI-verifiable — and leave R1 for the Architect to close before R4.
+
+**The risk this accepts, stated plainly.** R2/R3 are built before R1 confirms the
+substrate bet. If R1 later fails (NFSv4 *doesn't* dodge the timeout), that work
+is not wasted — the lifted server and its conformance still stand — but the
+*architecture* under Milestone A would need a rethink. The risk is bounded and
+the Architect can adjudicate it.
+
+**Interim evidence (not a substitute for R1).** FUSE-T, which uses an internal
+NFSv4 server mounted by the same macOS client, demonstrably serves the multi-GB
+workloads that stalled Comprador's NFSv3 path. That is circumstantial but
+directionally strong: it is the existence proof that *an* NFSv4-over-loopback
+mount handles these transfers on macOS. R1 upgrades this from "FUSE-T does it" to
+"we measured ours."
+
+**Where the wall really is.** R4 (kernel mount → Finder volume) is the hard
+environmental ceiling for an unprivileged headless agent: it needs root to mount
+and a GUI to confirm Finder visibility. This run's realistic terminus is the end
+of R3 — a lifted, de-coupled userspace NFSv4 server proven to answer real
+COMPOUNDs over the wire against the osfs backend. That is the engineering core of
+(A), minus the privileged mount.

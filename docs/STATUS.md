@@ -6,7 +6,7 @@ loop updates. If this file and the code disagree, the code is truth — fix this
 
 ---
 
-**Updated:** 2026-05-29
+**Updated:** 2026-05-29 (autonomous run: R1 gated, building R2)
 **Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
 filesystem of our own).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
@@ -21,17 +21,26 @@ pass; `go fmt` clean.
 
 ## Cursor — next increment
 
-**R1 — De-risk the substrate bet.** ([`ROADMAP.md`](ROADMAP.md))
+**R2 — Lift the NFSv4 server (DEC-007).** ([`ROADMAP.md`](ROADMAP.md))
 
-> **Done when:** a documented measurement shows a multi-minute slow read
-> completing over an NFSv4 mount where the NFSv3 path stalls (the timeout class
-> that motivated the project), using any NFSv4 server.
+> **Done when:** the lifted server package compiles and bb-rex's in-tree server
+> tests pass against the in-memory FSAL; `go list` shows no bb-storage import
+> outside the vendored floor.
 
-Why first: it gates months of server-lift work and costs an afternoon. If NFSv4
-does *not* dodge the macOS NFS-client RPC-timeout, the whole substrate choice is
-wrong and the plan changes. Run the falsifiable experiment before building.
+Re-sliced ahead of R1 — see **R1 block** below (DEC-009). R2 is pure-userspace
+and CLI-verifiable; it's the largest reachable chunk.
 
-Loop step to resume at: **2 (Scope)** — R1 has not been started.
+Loop step to resume at: **3 (Investigate)** — reading the server's true
+intra-package dependency set before carving.
+
+### Blocked
+
+- **R1 — de-risk the timeout bet.** Needs a root kernel NFS mount; this env is
+  uid 501, no sudo. **Gated on the Architect / a real privileged Mac.** Interim
+  evidence: FUSE-T (NFSv4-over-loopback) serves these workloads. Must be closed
+  before R4. (DEC-009)
+- **R4 — kernel mount → Finder.** Needs root + a GUI. The environmental ceiling
+  for this headless run; expected terminus is end of R3.
 
 ## Known blocks / open questions for upcoming increments
 
