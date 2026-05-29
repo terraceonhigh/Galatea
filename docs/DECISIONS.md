@@ -195,17 +195,33 @@ dependencies.* The package compiles with zero external dependencies.
 
 **Why full-fidelity (not a reduced subset):** a reduced interface would drift
 from what bb-rex's server expects, turning the eventual server lift into a
-redesign. Reproducing the exact method set keeps the later lift mechanical.
+redesign. Reproducing the exact method set keeps the interface *shape* stable —
+the server calls the same method names with the same argument structure.
 
-**The deferred consequence — stated plainly.** Because the leaf types are
-Galatea-native, bb-rex's server (whose method signatures use `path.Component`
-etc.) will *not* satisfy Galatea's interface as-is. When the server is lifted
-(a later increment), one of two things happens: (a) a sed-pass rewrites the
-server's bb-storage leaf types to Galatea's throughout, or (b) the server keeps
-bb-storage types internally and an adapter bridges at the mount boundary. That
-is the vendor-vs-shim fork from DEC-001, now scoped to the server alone. It is
-**not decided here** — the interface proves the *shape*; the server
-reconciliation is its own journaled decision when the server arrives.
+**The deferred consequence — stated plainly, and a correction.** Do not read the
+paragraph above as "the server lift is mechanical." It is not, and an earlier
+draft of this entry wrongly implied so (caught in review). bb-rex's nfsv4 server
+imports `bb-storage/pkg/filesystem/path` and `pkg/filesystem` *directly* (see the
+Layer-1 surface in `coupling-map.md`), and upstream those are the **same** types
+the `virtual` interface uses. By making `virtual.Component`/`FileType` etc.
+Galatea-native and *distinct*, this decision deliberately introduces a
+type-impedance boundary that did not exist in bb-rex. The hand-cut bought a clean,
+bb-storage-free interface **at the cost of** a server-side type reconciliation.
+
+So when the server is lifted, the fork is:
+- (a) **Hand-cut's natural sequel — reconcile:** a sed-pass rewrites the server's
+  bb-storage leaf types to Galatea's throughout, or an adapter bridges at the
+  boundary. Non-trivial; the price of this decision.
+- (b) **The genuinely mechanical alternative — vendor:** copy bb-storage's `path`
+  and `filesystem` packages (two of the 8-package floor) into the Galatea module
+  with an import-path rewrite, keeping the types *identical* to what the server
+  expects. Then the server imports them unchanged and compiles with no type churn.
+
+This is the vendor-vs-shim fork from DEC-001, now sharply scoped. It is **not
+decided here** — DEC-006 decides it with the server code in hand. Worth weighing
+honestly then: hand-cutting the interface may have optimised the wrong stage. If
+(b) is chosen for the server, it may be cleaner to *also* back the interface's
+leaf types with the vendored packages, retiring the native types from DEC-005.
 
 **What would change this.** If transcription fidelity proves too costly to
 maintain against bb-rex upstream drift, switch to vendoring bb-rex's `virtual`
