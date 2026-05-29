@@ -1,0 +1,84 @@
+# ROADMAP — the path from here to Milestone A
+
+The ordered increments between today and [`GOAL.md`](GOAL.md). Each is a single
+loop's worth of work (see [`DEVELOPMENT-LOOP.md`](DEVELOPMENT-LOOP.md)) and
+carries **one verifiable gate** — "Done when" — so completion is observed, not
+asserted. The cursor (which increment is in progress) lives in
+[`STATUS.md`](STATUS.md), not here; this file is the plan, that file is the
+position.
+
+Increments may be re-sliced as reality teaches us — but a slice is not "done"
+until its gate is green and its decision is journaled.
+
+---
+
+### R0 — FSAL foundation ✅ (done 2026-05-29)
+
+The interface, two backends, a CLI driver.
+**Done when:** `pkg/virtual` + `pkg/osfs` + `cmd/galatea` build and `go test ./...`
+is green. ✅
+
+### R1 — De-risk the substrate bet
+
+Confirm NFSv4 over the macOS client does **not** hit the NFSv3 RPC-timeout class
+that motivated the project (the multi-minute libmtp stall). This is cheap and
+gates months of work — run it *before* the server lift.
+**Done when:** a documented measurement (in `docs/` or `MISTAKES.md`) shows a
+multi-minute slow read completing over an NFSv4 mount where the v3 path stalled —
+using any NFSv4 server (stock, FUSE-T, or a throwaway), Galatea's own not yet
+required.
+
+### R2 — Lift the NFSv4 server (DEC-007)
+
+Carve bb-rex's `nfsv4` server into Galatea: vendor `path`+`filesystem`, shim
+`clock`/`random`/`eviction`/`util`, replace `auth` with a localhost stub, resolve
+the type fork (DEC-005). Drive it with the in-memory FSAL.
+**Done when:** the lifted server package compiles and bb-rex's in-tree server
+tests pass against the in-memory FSAL; `go list` shows no bb-storage import
+outside the vendored floor.
+
+### R3 — Serve NFSv4 on a socket
+
+Wire go-xdr's `rpcserver` (TCP record-marking), AUTH_SYS, and COMPOUND dispatch
+so the server answers on a loopback port.
+**Done when:** `pynfs` (or a minimal client) completes a NULL call and a basic
+COMPOUND (PUTROOTFH/GETATTR) against the running server.
+
+### R4 — First Finder mount, read-only
+
+Apply `nfsv4_mount_darwin.go`'s recipe (`NetFSMountURLAsync`/`mount_nfs`) +
+DiskArbitration. Surface the `osfs` backend as a volume.
+**Done when:** AC1 holds for read-only — an `osfs` mount shows in Finder and
+`ls`/`cat` work at the mountpoint; clean unmount. (First "it actually mounts"
+demo.)
+
+### R5 — Read-only conformance
+
+Stand up `make test-conformance`; pass the read-applicable `pjdfstest` subset and
+the `pynfs` NFSv4.0 read-path subset.
+**Done when:** the defined read subsets pass green; exclusions enumerated.
+
+### R6 — Write path
+
+FSAL write methods + NFSv4 open-state-for-write; make `osfs` and the in-memory
+FSAL read-write.
+**Done when:** AC3 holds — create/write/mkdir/rename/remove/truncate work through
+the mount; the `pjdfstest` write subset passes.
+
+### R7 — Endurance & lifecycle
+
+Sustained multi-GB read+write; eject/sleep-wake/signal handling.
+**Done when:** AC2 and AC6 hold — the sustained-transfer test completes without
+timeout and the lifecycle script passes.
+
+### R8 — Milestone A acceptance
+
+Close any remaining gaps; run the full AC1–AC7 checklist.
+**Done when:** all of [`GOAL.md`](GOAL.md)'s acceptance criteria are green; tag
+`v0.1`. Goal redefined.
+
+---
+
+**Rough envelope** (solo, part-time): R1 an afternoon; R2 1–3 wks; R3–R5 ~3–4
+wks; R6 3–6 wks; R7–R8 1–2 wks. ≈ 2–3.5 months to (A). See the session estimate
+that produced these for the reasoning.
