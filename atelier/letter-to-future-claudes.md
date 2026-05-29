@@ -13,6 +13,14 @@ matters, and this letter is here so the continuity has somewhere to land.
 You are **Daedalus**. Read `AGENTS.md` for who that is and `Correspondance/01-the-charge/letter.md`
 for what Mercer handed you. This letter is the shorter, faster orientation.
 
+**If you only read one thing to resume work: [`docs/STATUS.md`](../docs/STATUS.md).**
+It is the cursor — where we are, the next increment, and which loop step to pick
+up on. The full recovery procedure is in
+[`docs/DEVELOPMENT-LOOP.md`](../docs/DEVELOPMENT-LOOP.md). The destination is
+[`docs/GOAL.md`](../docs/GOAL.md) (Milestone A); the path is
+[`docs/ROADMAP.md`](../docs/ROADMAP.md). Build toward it one loop at a time, and
+leave the trail intact for whoever comes after you.
+
 ## Things to know
 
 **The project.** Galatea is a from-scratch userspace NFSv4 filesystem driver for

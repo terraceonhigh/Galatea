@@ -271,3 +271,39 @@ test of whether the interface is implementable without contortion.
 **What would change this.** Nothing reverses it — `osfs` is a permanent reference
 backend and a useful test fixture. The next increment (DEC-007) builds *up* from
 here: lift the NFS server and serve either backend over the wire.
+
+---
+
+## DEC-008 — Adopt Milestone A as the current ultimate goal, and a fixed development loop to reach it
+
+**Date:** 2026-05-29 · **Status:** accepted
+
+**Decision.** Two ratifications, at the Architect's instruction:
+
+1. **The goal is Milestone A** — a read-write, POSIX-reasonable, Finder-visible
+   filesystem of our own, no kext, no closed-source/commercial dependency,
+   consumed via `galatea.Mount(...)`. Defined with acceptance criteria in
+   [`GOAL.md`](GOAL.md); the ordered path in [`ROADMAP.md`](ROADMAP.md). This is
+   the bounded target — explicitly *not* the libfuse C ABI (goal B) or the MTP
+   backend (Phase 4). When all of GOAL.md's AC1–AC7 pass, the goal is redefined.
+
+2. **The process is the loop** in [`DEVELOPMENT-LOOP.md`](DEVELOPMENT-LOOP.md):
+   orient → scope → investigate → implement → verify (empirically) → journal →
+   commit (atomically) → checkpoint. Backed by a recovery procedure and a
+   verification policy, anchored on [`STATUS.md`](STATUS.md) as the single cursor.
+
+**Why ratify in the journal.** The goal and the method are themselves decisions a
+future session would otherwise have to reconstruct. This entry is the index:
+GOAL = destination, ROADMAP = path, STATUS = position, DEVELOPMENT-LOOP = method,
+DECISIONS = why, MISTAKES = receipts.
+
+**Why these criteria are durable.** The goal is defined by *observable* gates
+(mounts, byte-identical transfer, pjdfstest/pynfs subsets), not by feeling done.
+The loop makes every increment documented (a DEC), recoverable (STATUS + the
+trail), and verifiable (an empirical gate) — the three properties the Architect
+named.
+
+**What would change this.** Reaching Milestone A (redefine the goal toward B);
+or empirical evidence at R1 that the NFSv4 substrate doesn't dodge the timeout
+class — which would invalidate the architecture under the goal and force a
+rethink before R2. That is exactly why R1 is first.
