@@ -484,3 +484,38 @@ RPC-timeout) for free.
 **Roadmap effect:** inserts **R3-spike** before R2. R2 (bb-rex lift) and R3
 (production serving) follow, reusing everything the spike teaches about the macOS
 client's actual COMPOUND sequence.
+
+---
+
+## DEC-013 — Realize the "spike" AS the bb-rex read-first lift, not a from-scratch server
+
+**Date:** 2026-05-29 · **Status:** accepted (refines DEC-012)
+
+**Decision.** Do not hand-write a from-scratch NFSv4 server for the spike. Instead
+**lift bb-rex's server and wire its read path first** — that *is* the spike. Same
+intent as DEC-012 (a quick-as-possible, de-risking, read-only-first path to a real
+mount), better means.
+
+**Why (realized while sizing the from-scratch build).** macOS won't mount until
+the server correctly implements the genuinely hard parts of NFSv4: the FATTR4
+attribute-bitmap encoding (`supported_attrs`, `change`, `fsid`, `fileid`, `mode`,
+`owner`/`owner_group` as `user@domain` strings, the `time_*` fields,
+`mounted_on_fileid`, …), READDIR encoding, and the client-state handshake
+(SETCLIENTID/CONFIRM or 4.1 EXCHANGE_ID/CREATE_SESSION/SEQUENCE). These are
+exactly what makes bb-rex's `nfs40_program.go` 112 KB — and exactly what a
+from-scratch spike would have to reimplement *correctly* before anything mounts.
+Hand-writing them is **slower** to a correct mount than lifting the complete,
+tested implementation, and it would be throwaway.
+
+**Consequence.** There is no genuinely "fast" path to a macOS NFSv4 mount — it is
+intrinsically a multi-session build either way. Given that, the right vehicle is
+the one that is also the production server: the bb-rex lift. So the spike collapses
+into **R2, sequenced read-path-first**: get LOOKUP/GETATTR/ACCESS/READDIR/READ +
+the minimal state handshake mounting against the real macOS client before wiring
+the write path. The vendored `rpcserver` (DEC-010 follow-on) and the read-first
+sequencing are what remains of the "spike" idea; the from-scratch server is
+dropped.
+
+**Next:** R2b — vendor `path`+`filesystem` (DEC-011) — is now the immediate work,
+because the lifted server can't compile without them. Then the server files, then
+mount read-first.
