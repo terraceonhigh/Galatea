@@ -6,7 +6,8 @@ loop updates. If this file and the code disagree, the code is truth — fix this
 
 ---
 
-**Updated:** 2026-05-29 (autonomous run: R1 gated; R2a done; into R2 proper)
+**Updated:** 2026-05-29 (autonomous run: R1 gated; R2a + serving-foundation done;
+(A) confirmed reachable; R2b carve mapped)
 **Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
 filesystem of our own).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
@@ -21,6 +22,10 @@ pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
   Decisions DEC-001…DEC-006.
 - **R2a — go-xdr vendored.** `internal/xdr/` holds the XDR codec + NFSv4/RPCv2/
   darwin wire stubs, self-contained (stdlib-only), smoke-tested. DEC-010.
+- **Serving foundation.** `internal/xdr/pkg/rpcserver` (ONC-RPC loop + AUTH_SYS)
+  vendored; `golang.org/x/sync/errgroup` replaced by self-contained
+  `internal/errgroup`. Mount feasibility proven (M-004): NetFS/automountd path is
+  present, so **(A) is reachable here** — no root needed.
 
 ## Cursor — next increment
 
@@ -51,18 +56,52 @@ Investigation done — the map for the next session:
   - `auth`/`jmespath`/`eviction` — **don't vendor**; replace `system_authenticator.go`
     with a trivial localhost AUTH_SYS authenticator.
 
-Next concrete sub-steps:
-- **R2b** — vendor `path` + `filesystem` (+ `util`, `windowsext`), strip grpc-status
-  to `fmt.Errorf`; get them compiling in `internal/bb/`.
-- **R2c** — execute DEC-011: re-point `pkg/virtual` leaf types to the vendored
-  ones; fix `pkg/osfs`, the in-memory FSAL, `cmd/galatea`; re-verify the suite.
-- **R2d** — copy `nfs40_program.go` (+ `nfs41`, `opened_files_pool`,
-  `minor_version_fallback`, `metrics_program` with prometheus stripped, a
-  localhost `system_authenticator`), rewrite imports, get it compiling; add a
-  smoke COMPOUND test against the in-memory FSAL.
+Done this run toward R2: **rpcserver + a self-contained errgroup vendored**
+(spike/serving foundation, committed, green). Strategy refined (DEC-013): the
+"spike" is realized as **lifting bb-rex read-path-first**, not a from-scratch
+server (hand-writing correct FATTR4/READDIR/state-handshake is slower than lifting
+the complete impl). So the path forward is R2 proper, sequenced read-first.
 
-Loop step to resume at: **4 (Implement)** for R2b — investigation (step 3) is
-complete; the carve is mapped above.
+**R2b recipe (precise — investigated this run; vendor by copy+strip):**
+- `path`: vendor the package into `internal/bb/filesystem/path`. **Drop**
+  `local_format_windows.go` (`//go:build windows`). On darwin, 9 files compile and
+  use grpc/util: `absolute_scope_walker, builder, component,
+  loop_detecting_scope_walker, unix_format, relative_scope_walker,
+  virtual_root_scope_walker_factory, trace, windows_format`. path's ONLY external
+  symbols are `util.StatusWrap`/`util.StatusWrapf` and `status.Error`+`codes.*` —
+  all error wrappers. Strip: `status.Error(codes.X,"m")` → `errors.New("m")`;
+  `util.StatusWrap(err,"m")` → `fmt.Errorf("m: %w", err)`;
+  `util.StatusWrapf(err,"f",a...)` → `fmt.Errorf("f: %w", a..., err)`; fix imports
+  (drop grpc+util, add errors/fmt). Optional shrink: the server uses only
+  `{Component,Parser,Format,NewComponent,UNIXFormat,EmptyBuilder,VoidScopeWalker,
+  Resolve}` — the absolute/relative/loop_detecting/virtual_root scope-walker
+  variants may be deletable if nothing kept references them (verify, Go compiles
+  whole-package).
+- `filesystem`: survey the same way (needs `FileType*`,
+  `DeterministicFileModificationTimestamp`, `DeviceNumber`, `RegionType`,
+  `FileInfo`); expect the same grpc/util error-wrapper tail; strip identically.
+
+> **⚠ Do NOT vendor `util` wholesale** — it pulls jsonnet, protobuf, grpc,
+> prometheus, uuid. The "8-package floor" (coupling-map) is *symbol*-light but
+> *transitive-dependency*-heavy: vendor only the symbols actually used (here,
+> nothing from util survives the error-wrapper strip). Same caution for any floor
+> package taken whole.
+
+- **R2c** — execute DEC-011: re-point `pkg/virtual` leaf types to the vendored
+  `path`/`filesystem`; fix `pkg/osfs`, the in-memory FSAL, `cmd/galatea`; re-verify.
+- **R2d** — copy the server files (`nfs40_program`, `nfs41_program`,
+  `opened_files_pool`, `minor_version_fallback`, `metrics_program` with prometheus
+  stripped, a localhost `system_authenticator`), rewrite imports, compile; smoke
+  COMPOUND test vs the in-memory FSAL.
+- **R3/R4** — wire `cmd/galatea serve` (rpcserver loop, NFS prog 100003), then
+  `open nfs://localhost:PORT/` to mount read-first.
+
+Loop step to resume at: **4 (Implement)** for R2b — the carve is fully mapped.
+
+> **Tooling gotchas this run:** (1) `cd` in Bash *persists* the working dir across
+> calls and breaks later relative-path commands — use absolute paths / `git -C`.
+> (2) The classifier ("…temporarily unavailable") and the global hook intermittently
+> block Bash; retry, don't thrash.
 
 ### Mount feasibility — CORRECTED (see M-004)
 
