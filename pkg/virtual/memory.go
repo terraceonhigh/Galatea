@@ -101,8 +101,15 @@ func (f *memoryFile) VirtualOpenSelf(ctx context.Context, shareAccess ShareMask,
 }
 
 func (f *memoryFile) VirtualRead(buf []byte, offset uint64) (int, bool, Status) {
-	data, eof := BoundReadToFileSize(buf, offset, uint64(len(f.contents)))
-	n := copy(data, f.contents[offset:offset+uint64(len(data))])
+	size := uint64(len(f.contents))
+	if offset >= size {
+		// At or past end-of-file: nothing to read. An NFS client (and
+		// pjdfstest) will issue such reads; they must report EOF, not
+		// slice out of range.
+		return 0, true, StatusOK
+	}
+	data, eof := BoundReadToFileSize(buf, offset, size)
+	n := copy(data, f.contents[offset:])
 	return n, eof, StatusOK
 }
 

@@ -103,6 +103,22 @@ func TestReadFileOffset(t *testing.T) {
 	}
 }
 
+func TestReadAtAndPastEOF(t *testing.T) {
+	leaf := NewMemoryFile(9, PermissionsRead, []byte(helloContents))
+	size := uint64(len(helloContents))
+	buf := make([]byte, 8)
+	// At EOF and strictly past it must both report (0, eof) without panic.
+	for _, offset := range []uint64{size, size + 1, size + 100} {
+		n, eof, st := leaf.VirtualRead(buf, offset)
+		if st != StatusOK {
+			t.Errorf("VirtualRead(offset=%d) status = %v, want StatusOK", offset, st)
+		}
+		if n != 0 || !eof {
+			t.Errorf("VirtualRead(offset=%d) = (n=%d, eof=%v), want (0, true)", offset, n, eof)
+		}
+	}
+}
+
 type collectingReporter struct {
 	names []string
 }
