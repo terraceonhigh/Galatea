@@ -228,3 +228,46 @@ maintain against bb-rex upstream drift, switch to vendoring bb-rex's `virtual`
 package wholesale with a mechanical import-path rewrite (`buildbarn/bb-storage`
 → Galatea-internal shims). The hand-cut version is the bet that the interface is
 small and stable enough that owning it outright is cheaper than tracking it.
+
+---
+
+## DEC-006 — Deliver a CLI-drivable product now: a local-filesystem backend + `galatea` navigator. Defer the NFS server lift.
+
+**Date:** 2026-05-29 · **Status:** accepted
+
+> Numbering note: DEC-005 forecast that "DEC-006 decides the server-lift fork."
+> That fork is now **DEC-007** (when the server is lifted). This DEC-006 takes a
+> different, smaller step first, in response to the Architect's ask for a working
+> prototype bounded by what's drivable in CLI today.
+
+**Decision.** Before lifting bb-rex's NFSv4 server, ship something runnable:
+
+1. `pkg/osfs` — a **read-only FSAL backed by the local OS filesystem**
+   (`os.ReadDir`/`os.Open`/`os.Stat` → `virtual.Directory`/`virtual.Leaf`). This
+   is Galatea's *second* backend, and the first backed by something real.
+2. `cmd/galatea` — a CLI that roots an `osfs` FSAL at a host directory and drives
+   it (`ls`, `cat`, `stat`, `tree`). Every operation goes **through the
+   `virtual.*` interface** — `VirtualLookup`, `VirtualReadDir`, `VirtualRead`,
+   `VirtualGetAttributes` — i.e. the same calls an NFS server would make. The CLI
+   stands in for the NFS client a future mount will provide.
+
+**Why this, why now.** The product's defining feature — a Finder-visible NFS
+mount — needs the 112 KB server lift *and* root privileges for `mount_nfs`,
+neither of which lands in a day. But the FSAL is the load-bearing abstraction,
+and a second real backend plus a driver proves it end-to-end with zero
+privileges, entirely in CLI. It is a rudimentary product: you point Galatea at a
+directory and operate on it through Galatea's own filesystem layer.
+
+**What it deliberately is not.** No NFS wire protocol, no mount, no write path.
+The local backend is read-only (matching the in-memory one) so the increment
+stays bounded and honest.
+
+**What this validates.** The charge asked that the interface "be designed to
+support" real backends. Until now the only implementer was the in-memory test
+FSAL, which can be shaped to fit the interface. A backend over a real,
+externally-defined data source (the OS filesystem) is the first genuine pressure
+test of whether the interface is implementable without contortion.
+
+**What would change this.** Nothing reverses it — `osfs` is a permanent reference
+backend and a useful test fixture. The next increment (DEC-007) builds *up* from
+here: lift the NFS server and serve either backend over the wire.
