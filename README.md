@@ -66,9 +66,29 @@ written. On 2026-05-29 the de-coupling was measured against the source (see
   (`Node`/`Directory`/`Leaf`), hand-cut from bb-rex's `virtual` package and
   **clean of any bb-storage dependency**, satisfying the Phase-1 interface
   criterion.
-- A read-only in-memory FSAL and a green test suite (`go test ./...`).
+- [`pkg/osfs`](pkg/osfs) — a read-only FSAL backed by the local OS filesystem
+  (the first backend over a real data source), plus the in-memory test FSAL.
+- [`cmd/galatea`](cmd/galatea) — a CLI that navigates a directory **through** the
+  FSAL, and a green test suite (`go test ./...`).
 
 The reasoning for every decision so far lives in
-[`docs/DECISIONS.md`](docs/DECISIONS.md) (DEC-001 … DEC-005). Still ahead in
-Phase 1: lift bb-rex's NFSv4 server and reconcile it with this interface (the
-vendor-vs-shim fork, deferred in DEC-005), then Phase 2's macOS mount.
+[`docs/DECISIONS.md`](docs/DECISIONS.md) (DEC-001 … DEC-006).
+
+### Try it
+
+There is no NFS mount yet (that needs the server lift and root privileges). But
+the FSAL is runnable today: `galatea` points an `osfs` backend at a host
+directory and drives it through the same calls an NFS server would make —
+`VirtualLookup`, `VirtualReadDir`, `VirtualRead`, `VirtualGetAttributes`. It is
+the NFS client a future mount will provide, in CLI form, no privileges needed.
+
+```sh
+go run ./cmd/galatea ls   .            # list a directory through the FSAL
+go run ./cmd/galatea stat . go.mod     # show a node's attributes
+go run ./cmd/galatea cat  . go.mod     # read a file
+go run ./cmd/galatea tree . pkg        # recurse
+```
+
+Still ahead in Phase 1: lift bb-rex's NFSv4 server and reconcile it with this
+interface (the vendor-vs-shim fork, **DEC-007**), then Phase 2's macOS mount —
+at which point the same backends become a real Finder volume.
