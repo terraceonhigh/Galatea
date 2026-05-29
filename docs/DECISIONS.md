@@ -377,3 +377,59 @@ NFSv4 enum (`NfsFtype4`), proving the vendored copy encodes/decodes in-tree.
 
 **What this unblocks.** R3's RPC serving needs these wire types; R2's server lift
 needs them too. This is the foundation both build on.
+
+---
+
+## DEC-011 — Resolve the type fork: vendor bb-storage `path`+`filesystem`, retire `pkg/virtual`'s native leaf types (supersedes part of DEC-005)
+
+**Date:** 2026-05-29 · **Status:** accepted
+
+**Decision.** The DEC-005/DEC-007 fork is resolved in favour of the **mechanical
+(vendor) path**, not the reconcile path. Vendor bb-storage's `path` and
+`filesystem` packages into Galatea (copy + import-rewrite, as in DEC-010), and
+**re-point `pkg/virtual`'s leaf types to the vendored types** — `path.Component`,
+`path.Parser`, `filesystem.{FileType,DeviceNumber,RegionType,FileInfo}` — retiring
+the hand-cut natives introduced in DEC-005. `Permissions`, `Status`, `Attributes`,
+`Child`, and the `Node`/`Directory`/`Leaf` interfaces stay as they are.
+
+**Evidence (the Explore survey of the four server files):**
+- The server uses path's **full machinery**, not just `Component`:
+  `path.{Component, Parser, Format, NewComponent, UNIXFormat, EmptyBuilder,
+  VoidScopeWalker, Resolve}` — the parser/scope-walker stack, used in
+  `pathParserToLinktext4` for symlink-target conversion. Rewriting that to native
+  types means *reimplementing path parsing* — large and bug-prone. Vendoring keeps
+  it intact.
+- The server's `filesystem` use is just the `FileType*` constants +
+  `DeterministicFileModificationTimestamp` — small, but they must match
+  `pkg/virtual`'s `FileType`, which is the whole point of unifying on the vendored
+  type.
+- With `pkg/virtual` and the server both on the vendored `path`/`filesystem`
+  types, the server's `virtual.*` references resolve to `pkg/virtual` via a pure
+  import-rewrite, with **zero type conversion at the interface boundary.**
+
+**Why this is worth reworking already-committed code.** DEC-005 bet that owning
+the leaf types outright was cheaper than tracking them. The server survey
+falsified that for the *server*: the reconcile cost is reimplementing path
+parsing, far more than the vendoring cost. The hand-cut interface still did its
+job — it proved the FSAL shape and shipped R0's product — but the leaf types now
+swap to the vendored ones. DEC-005's structure stands; its leaf-type sourcing is
+superseded here.
+
+**Cost / blast radius.** `pkg/virtual` (types.go retired; attributes.go's
+`symlinkTarget` back to `path.Parser`, `deviceNumber`/`fileType` to
+`filesystem.*`), plus `pkg/osfs`, `pkg/virtual`'s in-memory FSAL, and
+`cmd/galatea` re-typed to the vendored leaf types. Mechanical; each re-verified by
+the existing test suite.
+
+**Re-scoped R2 gate.** bb-rex's in-tree server tests are gomock-generated against
+mocked interfaces (the `nfs40_program_test.go` alone is 233 KB and needs the
+upstream `internal/mock` + gomock). Vendoring that test mountain is its own
+project. So R2's gate is re-scoped from "bb-rex's tests pass" to **"the lifted
+server compiles, and a Galatea-authored smoke test drives a COMPOUND (e.g.
+PUTROOTFH+GETATTR) against the in-memory FSAL"** — a stronger, self-owned check,
+folded into R3.
+
+**Also stripped during the lift:** `nfs40_program.go`'s `prometheus` metrics
+(replaced with no-op counters or removed) and `system_authenticator.go`'s
+`auth`/`jmespath`/`eviction` use (replaced by a trivial localhost AUTH_SYS
+authenticator) — so none of prometheus, auth, jmespath, or eviction is vendored.

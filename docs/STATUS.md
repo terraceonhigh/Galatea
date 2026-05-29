@@ -30,21 +30,39 @@ pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
 > tests pass against the in-memory FSAL; `go list` shows no bb-storage import
 > outside the vendored floor.
 
-Next concrete sub-steps:
-- **R2b** — vendor the bb-storage floor by copy+rewrite (the same pattern as
-  DEC-010): `clock`, `random`, `eviction`, `util`, and `path`+`filesystem`
-  (stripped of the grpc/Windows bits — see `coupling-map.md`).
-- **R2c** — decide the DEC-005/DEC-007 type fork *with the server in front of
-  you*: either reconcile the server's `path.Component`/`filesystem.*` to
-  `pkg/virtual`'s native types, or (advisor's "mechanical" path) back
-  `pkg/virtual`'s leaf types with the vendored `path`/`filesystem` so the server
-  lifts unchanged. Journal as DEC-011.
-- **R2d** — copy `nfs40_program.go` (+ `nfs41`, `opened_files_pool`, a localhost
-  `system_authenticator` replacing the jmespath/auth one), rewrite imports, get
-  it compiling and its in-tree tests green against the in-memory FSAL.
+**The type fork is decided (DEC-011):** vendor `path`+`filesystem`, re-point
+`pkg/virtual`'s leaf types to them, retire the hand-cut natives. The server then
+lifts with import-rewrites only. The R2 gate is re-scoped to "compiles + a
+Galatea smoke COMPOUND test" (bb-rex's gomock tests are a separate mountain).
 
-Loop step to resume at: **3 (Investigate)** — read the server files' full
-intra-package symbol use before carving, to size R2c's fork honestly.
+Investigation done — the map for the next session:
+
+- **Server `virtual.*` surface** (nfs40): entirely interface/attributes/status/
+  permissions — **all already in `pkg/virtual`.** No handle-allocator or CAS
+  types. The server does *not* need the CAS machinery lifted. ✅ big de-risk.
+- **Server external deps to handle:**
+  - `go-xdr` — vendored (R2a). ✅
+  - `path` — **20 files**, imports `grpc/codes`+`grpc/status` (error returns) and
+    bb-storage `util`. Vendor + either accept grpc or strip grpc-status.
+  - `filesystem` — `FileType*` consts + `DeterministicFileModificationTimestamp`
+    (+ `util`, `windowsext` tail). Vendor.
+  - `clock` (Clock iface + Now), `random` (SingleThreadedGenerator) — tiny shims.
+  - `prometheus` (nfs40 metrics) — strip to no-ops.
+  - `auth`/`jmespath`/`eviction` — **don't vendor**; replace `system_authenticator.go`
+    with a trivial localhost AUTH_SYS authenticator.
+
+Next concrete sub-steps:
+- **R2b** — vendor `path` + `filesystem` (+ `util`, `windowsext`), strip grpc-status
+  to `fmt.Errorf`; get them compiling in `internal/bb/`.
+- **R2c** — execute DEC-011: re-point `pkg/virtual` leaf types to the vendored
+  ones; fix `pkg/osfs`, the in-memory FSAL, `cmd/galatea`; re-verify the suite.
+- **R2d** — copy `nfs40_program.go` (+ `nfs41`, `opened_files_pool`,
+  `minor_version_fallback`, `metrics_program` with prometheus stripped, a
+  localhost `system_authenticator`), rewrite imports, get it compiling; add a
+  smoke COMPOUND test against the in-memory FSAL.
+
+Loop step to resume at: **4 (Implement)** for R2b — investigation (step 3) is
+complete; the carve is mapped above.
 
 ### Blocked
 
