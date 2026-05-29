@@ -62,3 +62,37 @@ keep making Edit-only progress (file edits, STATUS), and ask the Architect to fi
 the one line. Do **not** thrash retrying Bash. This is why the loop's "stop clean"
 rule matters: when it hit, R2a was staged on disk and fully described in
 `STATUS.md`, so resuming was a clean continuation, not a reconstruction.
+
+## M-004 — declared the mount step "insurmountable (needs root)" without testing it
+
+**Date:** 2026-05-29 · **Cost:** wrongly told the Architect Milestone A was
+unreachable in this environment; nearly abandoned the reachable finish line.
+
+From a single `sudo -n true` failure (no non-interactive sudo) I concluded that
+mounting needs root, therefore R1/R4 are privilege-gated, therefore (A) is
+insurmountable here (DEC-009, and a whole closing report). The Architect pushed
+back — "we *are* on a Mac, what's limiting you?" — and one round of actual
+testing falsified it:
+
+- `mount_nfs` run as uid 501 reaches the network phase and returns *Connection
+  refused* (exit 61), not *Operation not permitted*. Root is not the gate at that
+  stage.
+- The **NetFS / `automountd` path is present** (`/usr/bin/open`,
+  `/usr/libexec/automountd`, `NetFS.framework`) — the *same unprivileged mount
+  mechanism FUSE-T uses*. `open nfs://localhost:PORT/…` has the privileged helper
+  perform the mount; the caller needs no root.
+
+So mounting is very likely achievable here unprivileged — the wall was an
+assumption, not a measured fact.
+
+**Cheaper path — and it's literally the project's first heuristic:** *run the
+syscall before designing the helper.* I had it in `AGENTS.md` and didn't apply it
+to my own blocker. The cost of the test was one `mount_nfs` invocation; the cost
+of the assumption was declaring the goal dead. This is M-001's pattern a second
+time (claiming a consequence without checking the source/syscall) — when about to
+write "X is impossible/blocked," spend the two minutes to falsify it first.
+
+**Still genuinely unverified (calibration):** I have not *completed* a mount —
+there's no server to mount yet (that's R3). What's established is that the mount
+*path is open and unprivileged*, not that the full mount + Finder display works.
+That gets proven at R4, once the server exists.

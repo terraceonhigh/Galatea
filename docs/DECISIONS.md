@@ -346,6 +346,17 @@ of R3 — a lifted, de-coupled userspace NFSv4 server proven to answer real
 COMPOUNDs over the wire against the osfs backend. That is the engineering core of
 (A), minus the privileged mount.
 
+> **CORRECTION 2026-05-29 (see M-004).** The "R4 needs root, insurmountable here"
+> claim above is **wrong** — asserted without testing. Measured since: `mount_nfs`
+> as uid 501 returns *Connection refused*, not *permission denied*, and the
+> NetFS/`automountd` path (FUSE-T's own unprivileged mount mechanism) is present
+> (`open`, `automountd`, `NetFS.framework`). R4 is feasible unprivileged via
+> `open nfs://localhost:PORT/…`; Finder visibility is verifiable by the Architect
+> plus `mount`/`df`. **(A) is reachable on this Mac.** R1 likewise becomes testable
+> once a server exists. The genuine remaining work is building the server (R2→R3),
+> not privilege. The re-slice in this DEC still stands (build R2+R3 first); only its
+> "insurmountable" framing is retracted.
+
 ---
 
 ## DEC-010 — Vendor go-xdr by copy + import-rewrite into `internal/xdr/` (R2a)

@@ -64,14 +64,24 @@ Next concrete sub-steps:
 Loop step to resume at: **4 (Implement)** for R2b — investigation (step 3) is
 complete; the carve is mapped above.
 
-### Blocked
+### Mount feasibility — CORRECTED (see M-004)
 
-- **R1 — de-risk the timeout bet.** Needs a root kernel NFS mount; this env is
-  uid 501, no sudo. **Gated on the Architect / a real privileged Mac.** Interim
-  evidence: FUSE-T (NFSv4-over-loopback) serves these workloads. Must be closed
-  before R4. (DEC-009)
-- **R4 — kernel mount → Finder.** Needs root + a GUI. The environmental ceiling
-  for this headless run; expected terminus is end of R3.
+Earlier this run I wrongly called R1/R4 "needs root, insurmountable here." Testing
+falsified it:
+
+- `mount_nfs` as uid 501 → *Connection refused* (exit 61), not *Operation not
+  permitted*. Root is not the gate at the network phase.
+- The **NetFS/`automountd` path is present** (`/usr/bin/open`,
+  `/usr/libexec/automountd`, `NetFS.framework`) — the unprivileged mount
+  mechanism FUSE-T uses. Plan for R4: `open nfs://localhost:PORT/…` (or the
+  NetFSMountURLAsync API), which has `automountd` mount on our behalf — no root.
+- **(A) is therefore very likely reachable on this Mac.** Not yet *proven* end to
+  end (no server to mount until R3); the mount *path* is open, the full mount +
+  Finder display is confirmed at R4.
+- Finder visibility is verifiable: the Architect can look, and `mount` / `df` /
+  `ls /Volumes` confirm it programmatically (this run is headless, the Mac is not).
+- Possible residual ask: if the NetFS path needs one privileged setup, the
+  Architect grants a single sudo'd command. Bounded, not a wall.
 
 ## Known blocks / open questions for upcoming increments
 
