@@ -345,3 +345,35 @@ and a GUI to confirm Finder visibility. This run's realistic terminus is the end
 of R3 — a lifted, de-coupled userspace NFSv4 server proven to answer real
 COMPOUNDs over the wire against the osfs backend. That is the engineering core of
 (A), minus the privileged mount.
+
+---
+
+## DEC-010 — Vendor go-xdr by copy + import-rewrite into `internal/xdr/` (R2a)
+
+**Date:** 2026-05-29 · **Status:** accepted
+
+**Decision.** go-xdr (the XDR codec and pre-generated NFSv4/RPCv2/darwin wire
+stubs, "used as-is" per the charge) is brought into Galatea by **copying the
+needed packages into `internal/xdr/` and rewriting their import prefix**, rather
+than depending on it via go.mod.
+
+**Why copy, not `require`.**
+- The worktree can't see the gitignored `references/` clone, so a local
+  `replace` wouldn't resolve here; a proxy fetch would pull go-xdr's dev-tool
+  dependency graph (antlr, gomock, gofumpt) into go.sum for code we don't run.
+- Copying makes the codec part of Galatea — no external dependency — satisfying
+  Milestone A's AC7 (purity) directly. The runtime + stubs depend only on the
+  standard library, so the vendored copy is self-contained.
+
+**Scope.** Vendored: `pkg/runtime`, `pkg/protocols/{rpcv2,nfsv4,
+darwin_nfs_sys_prot}`. Dropped: all `*_test.go` (dev-dep heavy) and every unused
+protocol. `pkg/rpcserver` deferred to R3 (it needs `golang.org/x/sync/errgroup`).
+Two logged modifications (import paths; five `%d`→`%v` bool-discriminant format
+fixes) — see `internal/xdr/VENDOR.md`. Apache-2.0 `LICENSE` carried alongside.
+
+**Verified.** `go build ./...`, `go vet ./...`, `go test ./...` all green; an
+`internal/xdr/smoke` test round-trips a primitive (unsigned hyper) and a generated
+NFSv4 enum (`NfsFtype4`), proving the vendored copy encodes/decodes in-tree.
+
+**What this unblocks.** R3's RPC serving needs these wire types; R2's server lift
+needs them too. This is the foundation both build on.

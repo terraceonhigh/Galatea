@@ -41,3 +41,24 @@ of the happy case. Reads past EOF, the multi-chunk streaming loop (M-002's
 sibling fix added a 100 KB round-trip test), zero-length files — these are where
 a filesystem lives. Verification policy in the development loop now says so
 explicitly.
+
+## M-003 — all Bash died mid-run; the cause was a broken *global* hook, not the project
+
+**Date:** 2026-05-29 · **Cost:** the autonomous run hit a hard stop at R2a; an
+Architect round-trip to resume.
+
+Mid-session, every Bash call began failing with
+`validate-bash.sh: line ~121: syntax error near unexpected token ')'`. The cause
+was external: `~/.claude/hooks/validate-bash.sh` was edited (adding a `vibe`
+case) and the preceding `wails)` case lost its `exit 0 ;;`, breaking the `case`
+statement. The agent could not fix it — the hook is outside the project dir, so
+Edit/Write refuse it, and `dangerouslyDisableSandbox` does not bypass a PreToolUse
+hook.
+
+**Recovery recipe (for the next session that sees this symptom):** if *all* Bash
+fails with a `validate-bash.sh` syntax error, it is not your command — it is the
+global hook. You cannot fix it from the sandbox. Surface it with the exact line,
+keep making Edit-only progress (file edits, STATUS), and ask the Architect to fix
+the one line. Do **not** thrash retrying Bash. This is why the loop's "stop clean"
+rule matters: when it hit, R2a was staged on disk and fully described in
+`STATUS.md`, so resuming was a clean continuation, not a reconstruction.

@@ -6,32 +6,45 @@ loop updates. If this file and the code disagree, the code is truth — fix this
 
 ---
 
-**Updated:** 2026-05-29 (autonomous run: R1 gated, building R2)
+**Updated:** 2026-05-29 (autonomous run: R1 gated; R2a done; into R2 proper)
 **Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
 filesystem of our own).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
-pass; `go fmt` clean.
+pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
+`MISTAKES.md` M-003.)
 
 ## Done
 
 - **R0 — FSAL foundation.** `pkg/virtual` (hand-cut, bb-storage-free interface +
   in-memory FSAL), `pkg/osfs` (read-only local-filesystem backend), `cmd/galatea`
-  (CLI navigator). The bb-storage coupling is measured
-  ([`coupling-map.md`](coupling-map.md)). Decisions DEC-001…DEC-006.
+  (CLI navigator). Coupling measured ([`coupling-map.md`](coupling-map.md)).
+  Decisions DEC-001…DEC-006.
+- **R2a — go-xdr vendored.** `internal/xdr/` holds the XDR codec + NFSv4/RPCv2/
+  darwin wire stubs, self-contained (stdlib-only), smoke-tested. DEC-010.
 
 ## Cursor — next increment
 
-**R2 — Lift the NFSv4 server (DEC-007).** ([`ROADMAP.md`](ROADMAP.md))
+**R2b → R2 — Lift the NFSv4 server (DEC-007).** ([`ROADMAP.md`](ROADMAP.md))
 
 > **Done when:** the lifted server package compiles and bb-rex's in-tree server
 > tests pass against the in-memory FSAL; `go list` shows no bb-storage import
 > outside the vendored floor.
 
-Re-sliced ahead of R1 — see **R1 block** below (DEC-009). R2 is pure-userspace
-and CLI-verifiable; it's the largest reachable chunk.
+Next concrete sub-steps:
+- **R2b** — vendor the bb-storage floor by copy+rewrite (the same pattern as
+  DEC-010): `clock`, `random`, `eviction`, `util`, and `path`+`filesystem`
+  (stripped of the grpc/Windows bits — see `coupling-map.md`).
+- **R2c** — decide the DEC-005/DEC-007 type fork *with the server in front of
+  you*: either reconcile the server's `path.Component`/`filesystem.*` to
+  `pkg/virtual`'s native types, or (advisor's "mechanical" path) back
+  `pkg/virtual`'s leaf types with the vendored `path`/`filesystem` so the server
+  lifts unchanged. Journal as DEC-011.
+- **R2d** — copy `nfs40_program.go` (+ `nfs41`, `opened_files_pool`, a localhost
+  `system_authenticator` replacing the jmespath/auth one), rewrite imports, get
+  it compiling and its in-tree tests green against the in-memory FSAL.
 
-Loop step to resume at: **3 (Investigate)** — reading the server's true
-intra-package dependency set before carving.
+Loop step to resume at: **3 (Investigate)** — read the server files' full
+intra-package symbol use before carving, to size R2c's fork honestly.
 
 ### Blocked
 
