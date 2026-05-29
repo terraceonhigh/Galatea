@@ -158,3 +158,57 @@ is already mapped.
 **What would change this.** Once the 8-package floor is shimmed/vendored in-tree,
 the bb-storage `replace`/`require` lines are deleted. The go-xdr line persists
 (lifted as-is); the bb-rex line goes once the server files are copied in.
+
+> **Update 2026-05-29:** DEC-005 supersedes the build approach for the *interface
+> package*. The interface is hand-cut and stdlib-replaced — it needs no bb-storage
+> dependency at all, so DEC-004's `replace` machinery is not exercised by the first
+> increment. DEC-004 still governs the eventual *server* lift, which does import
+> bb-rex.
+
+---
+
+## DEC-005 — First increment is a hand-cut, standalone interface package — stdlib-replaced leaf types, full-fidelity contract
+
+**Date:** 2026-05-29 · **Status:** accepted
+
+**Decision.** The first prototype increment is `pkg/virtual` — Galatea's public
+FSAL interface, **transcribed by hand from bb-rex's `virtual` package** rather
+than imported from it. The `Node`/`Directory`/`Leaf` interface contracts and the
+`Status`/`Attributes`/`Child` support types are reproduced at **full fidelity**
+(every method, every status code, every attribute). The handful of bb-storage
+*leaf types* the contract touches — `path.Component`, `path.Parser`,
+`filesystem.{FileType,Permissions,RegionType,DeviceNumber,FileInfo}` — are
+**replaced with Galatea-native equivalents** in the same package.
+
+This realizes DEC-001's "stdlib-replaced" option for the interface, and satisfies
+the Phase-1 success criterion directly: *the interface is clean of bb-storage
+dependencies.* The package compiles with zero external dependencies.
+
+**Why hand-cut, not import:**
+- The Phase-1 criterion requires the exposed interface be bb-storage-free.
+  Importing bb-rex's `virtual` package leaves it bb-storage-*dirty*. Only a
+  transcription (or a vendor-and-rewrite) satisfies the criterion.
+- The interface is Galatea's actual product surface — the thing every host plugs
+  into. It is the right thing to own line-by-line first, before the engine.
+- It needs no network, no module-graph resolution, no `replace` gymnastics. It
+  compiles standing alone.
+
+**Why full-fidelity (not a reduced subset):** a reduced interface would drift
+from what bb-rex's server expects, turning the eventual server lift into a
+redesign. Reproducing the exact method set keeps the later lift mechanical.
+
+**The deferred consequence — stated plainly.** Because the leaf types are
+Galatea-native, bb-rex's server (whose method signatures use `path.Component`
+etc.) will *not* satisfy Galatea's interface as-is. When the server is lifted
+(a later increment), one of two things happens: (a) a sed-pass rewrites the
+server's bb-storage leaf types to Galatea's throughout, or (b) the server keeps
+bb-storage types internally and an adapter bridges at the mount boundary. That
+is the vendor-vs-shim fork from DEC-001, now scoped to the server alone. It is
+**not decided here** — the interface proves the *shape*; the server
+reconciliation is its own journaled decision when the server arrives.
+
+**What would change this.** If transcription fidelity proves too costly to
+maintain against bb-rex upstream drift, switch to vendoring bb-rex's `virtual`
+package wholesale with a mechanical import-path rewrite (`buildbarn/bb-storage`
+→ Galatea-internal shims). The hand-cut version is the bet that the interface is
+small and stable enough that owning it outright is cheaper than tracking it.
