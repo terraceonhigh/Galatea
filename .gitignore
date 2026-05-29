@@ -1,5 +1,6 @@
 .env
 .DS_Store
+.commitmsg.tmp
 
 # Local-only working clones of third-party FOSS repositories. Daedalus
 # reads and lifts from these; they do not enter Galatea's git tree.

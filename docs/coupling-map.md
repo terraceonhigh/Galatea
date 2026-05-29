@@ -99,8 +99,10 @@ the kit shopping list.
 - Go compiles packages whole. The Layer-2 "leave the CAS files behind" move
   requires physically splitting `virtual` into separate packages (interface vs.
   CAS impl), not just not-importing files. That surgery is the actual work.
-- `node.go` is the load-bearing unknown. If the interface depends on it and it
-  is genuinely CAS-coupled, the clean split costs more than measured.
+- ~~`node.go` is the load-bearing unknown.~~ **Resolved (DEC-002):** node.go
+  holds both the clean `Node` interface and the CAS-coupled `Apply*` payloads,
+  but they're textually separable — keep the interface + `GetFileInfo`, drop the
+  payloads, and the `blobstore`/`digest`/Bazel-proto imports go with them.
 - Test files were excluded throughout (`internal/mock`, `testutil` are
   test-only). Phase 1's own tests will reintroduce a small test-time surface.
 

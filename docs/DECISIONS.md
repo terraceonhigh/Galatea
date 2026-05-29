@@ -62,3 +62,51 @@ is still projected, not weighed.
 CAS-implementation). Then prototype the `virtual`-interface extraction into a
 fresh package and confirm it compiles against an in-memory FSAL with only the
 8-package floor present.
+
+> **Update 2026-05-29:** the `node.go` unknown is resolved — see DEC-002. It
+> splits cleanly. The strategy stands.
+
+---
+
+## DEC-002 — `node.go` splits cleanly: keep the `Node` interface, drop the `Apply*` payloads
+
+**Date:** 2026-05-29 · **Status:** accepted
+
+**Decision.** The one unclassified file from DEC-001, `virtual/node.go`, is not a
+blocker. Galatea keeps the `Node` interface and the `GetFileInfo` helper verbatim
+and **drops all five `Apply*` payload structs**. Doing so removes node.go's
+`blobstore`, `digest`, `bazeloutputservice`, and `outputpathpersistency` imports
+entirely.
+
+**Evidence** (read of `node.go` in full, bb-rex `ed02b7a`):
+
+- `node.go` defines (a) the `Node` interface — the intersection embedded by both
+  `Directory` and `Leaf`; (b) `GetFileInfo`; and (c) five `ApplyXxx` structs.
+- The `Node` interface's four method signatures —  `VirtualGetAttributes`,
+  `VirtualSetAttributes`, `VirtualApply(data any) bool`,
+  `VirtualOpenNamedAttributes` — reference only `context`, `AttributesMask`,
+  `Attributes`, `Status`, `Directory`. **No CAS types.**
+- The CAS coupling lives entirely in the `Apply*` structs (`ApplyUploadFile`
+  carries `blobstore.BlobAccess` + `digest.Digest`; `ApplyGetContainingDigests`
+  carries `digest.Set`; two more carry Bazel-output-service protos). These are
+  *payloads* passed through `VirtualApply(data any)` — an untyped, type-switched
+  extension hook. They are bb-rex's CAS/Bazel features, not part of any interface
+  signature.
+- Because `VirtualApply` takes `any`, dropping the structs is invisible to the
+  interface contract: a Galatea FSAL simply never receives those payloads and
+  `VirtualApply` returns `false` for them. `GetFileInfo` is already CAS-free.
+
+**Why this matters.** DEC-001's clean-split claim rested on `node.go` being
+interface-bearing rather than CAS-implementation. It is *both* in the same file —
+but the two concerns are textually separable with a knife, not a scalpel. The
+interface half is exactly what Galatea must expose; the payload half is exactly
+what it must shed. No type from the dropped half leaks into the kept half.
+
+**What would change this.** If a future downstream wants CAS-backed files through
+Galatea (it won't — Comprador's backend is MTP, not content-addressed), the
+`ApplyUploadFile` payload would need reinstating, re-importing `blobstore`/
+`digest`. Out of scope by design.
+
+**Consequence for the extraction.** The kept surface of `node.go` is ~40 lines
+(interface + `GetFileInfo`). When the `virtual` interface package is carved, this
+is one of the first files in, trimmed of its lower two-thirds.
