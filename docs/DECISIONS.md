@@ -110,3 +110,51 @@ Galatea (it won't — Comprador's backend is MTP, not content-addressed), the
 **Consequence for the extraction.** The kept surface of `node.go` is ~40 lines
 (interface + `GetFileInfo`). When the `virtual` interface package is carved, this
 is one of the first files in, trimmed of its lower two-thirds.
+
+---
+
+## DEC-003 — Module path `github.com/terraceonhigh/galatea`
+
+**Date:** 2026-05-29 · **Status:** provisional (no remote chosen yet)
+
+**Decision.** The Go module is `github.com/terraceonhigh/galatea`, lowercase per
+Go import idiom. Chosen to match the GitHub org used by sibling `Foral`
+(`github.com/terraceonhigh/Foral`) and Comprador.
+
+**What would change this.** If Galatea lands on Forgejo (`forge.terrace.zone`)
+instead — plausible, since the house keeps private/personal repos there — the
+path changes to match. Cheap to rename now (no importers); journaled so the
+choice is visible rather than silent. Revisit when the Architect picks the host.
+
+---
+
+## DEC-004 — Build against the local `references/` clones via `replace`, not the module proxy
+
+**Date:** 2026-05-29 · **Status:** accepted (for the lift phase)
+
+**Decision.** `go.mod` pins bb-rex, bb-storage, and go-xdr with `replace`
+directives pointing at the local reference clones rather than fetching
+pseudo-versions from `proxy.golang.org`. In a worktree — where `references/*` is
+gitignored and therefore absent — the clones are made resolvable with local
+symlinks into the main checkout; the symlinks are themselves gitignored, so they
+never enter the tree.
+
+**Why.**
+- The reference clones are the exact source I read and measured (bb-rex
+  `ed02b7a`). Building against them, not a proxy fetch, guarantees the code I
+  reasoned about is the code I compile. No version skew.
+- bb-storage's go.mod pseudo-version is future-dated (`v0.0.0-20260507...`); the
+  proxy may not carry it, and the network is not a dependency I want in the lift
+  loop.
+- `replace` is the standard Go mechanism for exactly this; it leaves `require`
+  lines honest about provenance.
+
+**Relationship to DEC-001.** This is a *scaffolding* decision, not a reversal of
+DEC-001. The end-state module is bb-storage-free. Depending on the floor now —
+measured and bounded at 8 packages — gets a green build fast; the shim work
+replaces those imports incrementally afterward. Nothing is hidden: the coupling
+is already mapped.
+
+**What would change this.** Once the 8-package floor is shimmed/vendored in-tree,
+the bb-storage `replace`/`require` lines are deleted. The go-xdr line persists
+(lifted as-is); the bb-rex line goes once the server files are copied in.
