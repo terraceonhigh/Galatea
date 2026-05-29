@@ -56,4 +56,19 @@ The `references/` clones are read-only working copies for Daedalus to study and 
 
 ## Status
 
-Day 0. The repository was initialised on 2026-05-17 with the FOSS bases cloned and the opening letter from the Architect written. No Galatea code yet — Phase 1 begins with Daedalus's first letter back.
+**Phase 1, first increment landed (2026-05-29).** The repository was initialised
+on 2026-05-17 with the FOSS bases cloned and the charge letter from Mercer
+written. On 2026-05-29 the de-coupling was measured against the source (see
+[`docs/coupling-map.md`](docs/coupling-map.md)) and the first code landed:
+
+- A standalone Go module, `github.com/terraceonhigh/galatea`.
+- [`pkg/virtual`](pkg/virtual) — Galatea's public FSAL interface
+  (`Node`/`Directory`/`Leaf`), hand-cut from bb-rex's `virtual` package and
+  **clean of any bb-storage dependency**, satisfying the Phase-1 interface
+  criterion.
+- A read-only in-memory FSAL and a green test suite (`go test ./...`).
+
+The reasoning for every decision so far lives in
+[`docs/DECISIONS.md`](docs/DECISIONS.md) (DEC-001 … DEC-005). Still ahead in
+Phase 1: lift bb-rex's NFSv4 server and reconcile it with this interface (the
+vendor-vs-shim fork, deferred in DEC-005), then Phase 2's macOS mount.
