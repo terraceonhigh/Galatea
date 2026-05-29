@@ -10,6 +10,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -253,16 +254,28 @@ func doCat(root virtual.Directory, sub string) error {
 	}
 	defer leaf.VirtualClose(virtual.ShareMaskRead)
 
+	if st := streamLeaf(os.Stdout, leaf); st != virtual.StatusOK {
+		return fmt.Errorf("read: %s", st)
+	}
+	return nil
+}
+
+// streamLeaf copies a leaf's full contents to w via repeated VirtualRead,
+// advancing the offset across as many buffer-sized chunks as the file
+// requires. This multi-chunk path is the one that matters for Galatea:
+// the project exists because multi-GB transfers must stream, not fit in
+// one read.
+func streamLeaf(w io.Writer, leaf virtual.Leaf) virtual.Status {
 	buf := make([]byte, 32*1024)
 	var offset uint64
 	for {
 		n, eof, st := leaf.VirtualRead(buf, offset)
 		if st != virtual.StatusOK {
-			return fmt.Errorf("read at %d: %s", offset, st)
+			return st
 		}
 		if n > 0 {
-			if _, werr := os.Stdout.Write(buf[:n]); werr != nil {
-				return werr
+			if _, err := w.Write(buf[:n]); err != nil {
+				return virtual.StatusErrIO
 			}
 			offset += uint64(n)
 		}
@@ -270,7 +283,7 @@ func doCat(root virtual.Directory, sub string) error {
 			break
 		}
 	}
-	return nil
+	return virtual.StatusOK
 }
 
 func doTree(root virtual.Directory, sub string) error {
