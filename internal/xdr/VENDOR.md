@@ -24,8 +24,12 @@ wire types, including the macOS-only `darwin_nfs_sys_prot` mount-flags protocol)
 - **What was dropped:** all `*_test.go` (they pull `gomock`/`testify`/the upstream
   `internal/mock`, dev dependencies we don't carry), and every package except the
   ones the NFSv4 path needs: `pkg/runtime`, `pkg/protocols/{rpcv2,nfsv4,
-  darwin_nfs_sys_prot}`. `pkg/rpcserver` will be vendored at R3 (it needs
-  `golang.org/x/sync/errgroup`).
+  darwin_nfs_sys_prot}`, and `pkg/rpcserver` (the ONC-RPC record-marking server
+  loop + AUTH_SYS authenticator).
+- **`golang.org/x/sync/errgroup`**, which `rpcserver` imports, is NOT taken as a
+  dependency: it is replaced by a self-contained ~25-line reimplementation at
+  `internal/errgroup` (same WithContext/Go/Wait semantics), keeping Galatea
+  dependency-free. `rpcserver`'s import was rewritten to point at it.
 
 Vendored at R2a (DEC-010). Codec correctness is upstream's; a smoke test in
 `internal/xdr/` proves the vendored copy round-trips.

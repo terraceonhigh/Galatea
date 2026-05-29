@@ -444,3 +444,43 @@ folded into R3.
 (replaced with no-op counters or removed) and `system_authenticator.go`'s
 `auth`/`jmespath`/`eviction` use (replaced by a trivial localhost AUTH_SYS
 authenticator) — so none of prometheus, auth, jmespath, or eviction is vendored.
+
+---
+
+## DEC-012 — Spike a minimal read-only NFSv4 server to a real mount first, then lift bb-rex (Architect-chosen)
+
+**Date:** 2026-05-29 · **Status:** accepted
+
+**Decision.** Before the full bb-rex lift (R2), build a **minimal read-only NFSv4
+server** ("the spike") over the already-vendored go-xdr stubs, serving the `osfs`
+backend, and **actually mount it** via `open nfs://localhost:PORT/…` (the
+NetFS/automountd path proven feasible in M-004). Confirm the whole pipeline —
+server → mount → Finder — end to end. *Then* lift bb-rex's production server (R2)
+to replace the spike.
+
+**Why (Architect chose "spike first, then lift").** Now that M-004 shows mounting
+works unprivileged here, the highest-value next move is to prove the entire
+pipeline end-to-end cheaply: it validates `pkg/virtual` against the *real macOS
+NFSv4 client* (not a test harness), surfaces macOS quirks early (R5 territory),
+de-risks R1 (timeout) and R4 (mount) together, and produces a tangible mounted
+volume. The spike is scaffolding, not the final server — bb-rex remains the
+production engine (the "lift, don't write" thesis is intact; the spike is a
+de-risking probe, explicitly throwaway).
+
+**Scope of the spike (read-only):** the RPC loop (vendored go-xdr `rpcserver` +
+`rpcv2`), NFSv4.0 `COMPOUND` dispatch, and the minimum ops macOS needs to mount
+and browse: `PUTROOTFH`, `PUTFH`, `GETFH`, `SAVEFH/RESTOREFH` as needed,
+`GETATTR`, `ACCESS`, `LOOKUP`, `READDIR`, `READ`, `READLINK`, plus the minimal
+client-state ops macOS demands (`SETCLIENTID`/`SETCLIENTID_CONFIRM` or the 4.1
+`EXCHANGE_ID`/`CREATE_SESSION`, discovered empirically from what the client
+sends). Reads use the anonymous/special stateid — no `OPEN` state machine. A
+file-handle table maps opaque handles ↔ `virtual.Node`.
+
+**Verification (the gate):** `open nfs://localhost:PORT/` mounts; `ls`/`cat` at
+the mountpoint return correct data from `osfs`; `mount`/`df` show the volume; the
+Architect eyeballs Finder. Then a multi-minute slow read confirms R1 (no
+RPC-timeout) for free.
+
+**Roadmap effect:** inserts **R3-spike** before R2. R2 (bb-rex lift) and R3
+(production serving) follow, reusing everything the spike teaches about the macOS
+client's actual COMPOUND sequence.
