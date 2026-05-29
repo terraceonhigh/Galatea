@@ -1,5 +1,7 @@
 package virtual
 
+import "strconv"
+
 // Status is the response of operations applied against Node objects.
 // Transcribed verbatim from bb-rex's virtual.Status. Each value maps
 // onto an NFSv4 error code in the server layer (lifted later).
@@ -53,3 +55,46 @@ const (
 	// inappropriately crosses a boundary.
 	StatusErrXDev
 )
+
+// String renders a Status as a short, stable name, for logging and CLI
+// output. Unknown values render as "Status(N)".
+func (s Status) String() string {
+	switch s {
+	case StatusOK:
+		return "OK"
+	case StatusErrAccess:
+		return "Access"
+	case StatusErrBadHandle:
+		return "BadHandle"
+	case StatusErrExist:
+		return "Exist"
+	case StatusErrInval:
+		return "Inval"
+	case StatusErrIO:
+		return "IO"
+	case StatusErrIsDir:
+		return "IsDir"
+	case StatusErrNoEnt:
+		return "NoEnt"
+	case StatusErrNotDir:
+		return "NotDir"
+	case StatusErrNotEmpty:
+		return "NotEmpty"
+	case StatusErrNXIO:
+		return "NXIO"
+	case StatusErrPerm:
+		return "Perm"
+	case StatusErrROFS:
+		return "ROFS"
+	case StatusErrStale:
+		return "Stale"
+	case StatusErrSymlink:
+		return "Symlink"
+	case StatusErrWrongType:
+		return "WrongType"
+	case StatusErrXDev:
+		return "XDev"
+	default:
+		return "Status(" + strconv.Itoa(int(s)) + ")"
+	}
+}
