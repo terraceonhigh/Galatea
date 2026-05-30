@@ -88,11 +88,16 @@ timeout and the lifecycle script passes.
   (eject half); **sleep-wake and signal-driven shutdown remain Architect-gated**
   (not headless-doable).
 
-### R8 — Milestone A acceptance
+### R8 — Milestone A acceptance  🟡 (checklist tallied 2026-05-29; tag pending gates)
 
 Close any remaining gaps; run the full AC1–AC7 checklist.
 **Done when:** all of [`GOAL.md`](GOAL.md)'s acceptance criteria are green; tag
 `v0.1`. Goal redefined.
+- **Checklist tallied** in [`ACCEPTANCE.md`](ACCEPTANCE.md): AC2/AC3/AC7 ✅ met
+  headless; AC1/AC5 🟡 (substance met, cosmetic/tooling half gated); AC4 ⛔
+  (Linux CI); AC6 🟡 (clean-unmount met, sleep/wake gated, signal-handling the one
+  headless-doable remainder). **Tag held** until AC4 + pynfs-proper land in CI so
+  `v0.1` means the *full* checklist, not the headless subset.
 
 ---
 

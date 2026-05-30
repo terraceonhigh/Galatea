@@ -150,8 +150,10 @@ R1, R7-AC2, and R5-headless are banked and green. The next increments need a gat
 to open (a Linux CI runner for pjdfstest, a one-line `pip install ply` for pynfs,
 a non-headless Mac for sleep-wake/Finder, or a deliberate decision to start
 osfs-write). Resume at **step 2 (Scope)** for whichever gate the Architect opens
-next — or open the R8 acceptance checklist to tally AC1–AC7 and see what a `v0.1`
-tag would still need.
+next. The R8 acceptance checklist is **already tallied** in
+[`ACCEPTANCE.md`](ACCEPTANCE.md) (AC2/AC3/AC7 ✅; AC1/AC5/AC6 🟡; AC4 ⛔) — read it
+first to see exactly what each remaining gate needs and what a `v0.1` tag is
+waiting on.
 
 > **Tooling gotchas this run:** (1) `cd` in Bash *persists* the working dir across
 > calls and breaks later relative-path commands — use absolute paths / `git -C`.
