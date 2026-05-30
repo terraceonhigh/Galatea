@@ -686,10 +686,11 @@ DEC-017.
 
 ---
 
-## DEC-017 — Handle allocation is R3's gating decision (OPEN) — backends don't yet provide file handles
+## DEC-017 — Handle allocation: backends self-assign (Option B); the bb-rex allocator drags the node framework
 
-**Date:** 2026-05-29 · **Status:** provisional (fork named, not yet chosen) ·
-**Surfaced by:** the R3 serving investigation, immediately after R2d.
+**Date:** 2026-05-29 · **Status:** accepted (Option B chosen empirically; Option A
+attempted and rejected) · **Surfaced by:** the R3 serving investigation,
+immediately after R2d.
 
 **The discovery.** Wiring the lifted server to actually *run* (R3) surfaced a gap
 the lift itself didn't: the server is built around **file handles** the FSAL must
@@ -737,26 +738,36 @@ allocator lifts as cleanly as the server did, A is clearly right (generality for
 free). If it drags the dropped CAS/allocator surface back in, B wins for Galatea's
 backends.
 
-**Measurement (this run) — Option A is clean; leaning A.** `nfs_handle_allocator.go`
-(660 lines) + `handle_allocator.go` (129 lines) import **only** `bb-storage/pkg/`
-`{filesystem/path,random}` — both already vendored. No CAS, no dropped surface. So
-Option A lifts with import-rewrites alone, exactly like the server (R2d). And the
-lifted server references only `virtual.HandleResolver` (not the allocator types
-directly), so the allocator is host-side plumbing: it wraps the backend root to
-mint stable `FileHandle`s and yields the `HandleResolver` the pool needs.
+**Resolution (attempted A, this run) — A drags the node framework; chose B.** The
+import measurement was encouraging but misleading: `nfs_handle_allocator.go` (660
+lines) + `handle_allocator.go` (129 lines) import **only** `path` + `random`
+(both vendored), so on imports alone Option A looked as clean as the server lift.
+*Attempting* it falsified that — the same "imports ≠ symbol surface" lesson as
+R2d. Copying the two files and building `pkg/virtual` surfaced undefined
+**`LinkableLeaf`** and **`fnv1aHasher`**; `LinkableLeaf` (from the dropped
+`linkable_leaf.go`) embeds `Leaf` **and `InitialNode`** — i.e. it pulls bb-rex's
+`PrepopulatedDirectory` / `InitialNode` *node framework*, exactly the in-memory
+FSAL machinery the hand-cut `pkg/virtual` (DEC-005) deliberately did **not**
+reproduce. So Option A is not a 2-file lift; it re-imports a chunk of the dropped
+FSAL surface. Reverted (restored `handle.go`, dropped the two files; `pkg/virtual`
+green again).
 
-Two integration snags to handle when executing A (next session):
-1. **`HandleResolver` is now defined twice.** R2d added `pkg/virtual/handle.go`
-   with `type HandleResolver func(io.ByteReader)(DirectoryChild, Status)`;
-   `handle_allocator.go` defines the same. Lifting the latter means deleting
-   `handle.go` (use the upstream definition) — trivial, but don't miss it.
-2. **Backend wiring.** The allocator wraps `virtual.Directory`/`Leaf` and
-   intercepts `VirtualGetAttributes` to inject the handle. The serve path must
-   wrap the chosen backend (in-memory / osfs) in the allocator before handing the
-   root to `NewNFS40Program`. That's the bridge that gives R0's handle-less
-   backends their `FileHandle` without per-backend work — which also resolves the
-   "backends don't set FileHandle" gap in favour of A over B.
+**Decision: Option B — backends self-assign handles.** Galatea's backends mint
+their own `FileHandle` (e.g. a stable inode-number-derived opaque), set it in
+`VirtualGetAttributes` under `AttributesMaskFileHandle`, and the serve path
+supplies a small Galatea-written `HandleResolver` (handle → node) — a map for
+in-memory, a path/inode scheme for `osfs`. This keeps Galatea's lightweight node
+model (no `LinkableLeaf`/`InitialNode`/`PrepopulatedDirectory`) and is bounded to
+the two backends we actually have. `pkg/virtual/handle.go`'s `HandleResolver` type
+stays.
 
-So the lean is **Option A**, executed as its own increment (lift the two files,
-de-dup `HandleResolver`, wrap the backend, then serve). Not done this run — it is
-the R3 opener, teed up.
+**R3 opener, concretely:** (1) give the in-memory FSAL a `FileHandle` (per-node
+counter or pointer-stable id) + a resolver; (2) wire `cmd/galatea serve` /
+`Serve`; (3) NULL + PUTROOTFH+GETATTR smoke over an in-process pipe. `osfs`
+handles can follow (inode-based) when a real-tree mount is wanted (R4).
+
+**What would change this.** If a future backend (Comprador's MTP, Stepford's
+NTFS) needs richer handle semantics than a self-assigned opaque — e.g. handles
+stable across remounts — revisit; bb-rex's allocator could then be adapted to
+Galatea's node model rather than lifted whole. For Milestone A's in-memory/osfs
+backends, B is sufficient and far lighter.

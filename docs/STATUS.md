@@ -69,22 +69,24 @@ authenticator, and two backends to serve (`pkg/virtual` in-memory, `pkg/osfs`).
 `(r, w)` per connection. The smoke test can drive `HandleConnection` over an
 in-memory pipe — no TCP or pynfs needed for NULL + PUTROOTFH+GETATTR.
 
-**⚠ R3 PREREQUISITE discovered (the real next decision) — handle allocation.**
-`NewNFS40Program` reads the root's `FileHandle` attribute at construction (panics
-if unset), and `NewOpenedFilesPool` needs a `virtual.HandleResolver` (handle →
-node) for PUTFH/LOOKUP/READ. **The R0 backends (`pkg/virtual` in-memory, `osfs`)
-implement neither** — they were built to satisfy the interface *shape* + the CLI
-navigator, not the server's handle model. So running the server needs, first, a
-**handle-allocation story** (DEC-017, open):
-- Option A — **lift bb-rex's handle allocator** (`nfs_handle_allocator.go` +
-  `handle_allocator.go`, left in `references/`): the "lift, don't write" path;
-  integrates FileHandle assignment + resolution with the FSAL. Has its own
-  de-couple surface to measure.
-- Option B — **backends self-assign** handles (e.g. inode-number-derived) +
-  a Galatea-written resolver. Simpler for osfs/in-memory; less general.
-A minimal NULL + PUTROOTFH+GETATTR smoke could use a *stub* resolver (never
-called by that COMPOUND) **once the root provides a FileHandle** — so even the
-smoke needs at least minimal FileHandle support in the backend.
+**⚠ R3 PREREQUISITE — handle allocation (DEC-017, RESOLVED → Option B).**
+`NewNFS40Program` reads the root's `FileHandle` at construction (panics if unset),
+and `NewOpenedFilesPool` needs a `virtual.HandleResolver` (handle → node). The R0
+backends provide neither. **This run attempted Option A (lift bb-rex's handle
+allocator) and rejected it** — it drags `LinkableLeaf`→`InitialNode`→the
+`PrepopulatedDirectory` node framework the hand-cut `pkg/virtual` deliberately
+omitted (imports looked clean; the symbol cascade wasn't — the R2d lesson again).
+**Chosen: Option B — backends self-assign handles** + a small Galatea-written
+resolver. Keeps the lightweight node model. See DEC-017.
+
+So the R3 opener is now concrete:
+1. **Give the in-memory FSAL a `FileHandle`** (per-node stable id) set under
+   `AttributesMaskFileHandle` in `VirtualGetAttributes`, + a map-backed
+   `HandleResolver`. (`osfs` handles — inode-based — can follow at R4.)
+2. **Wire `cmd/galatea serve` / a `Serve`**: build the program over the backend,
+   register prog 100003, listen on loopback (or drive `HandleConnection` directly
+   for the test).
+3. **Smoke**: NULL, then PUTROOTFH+GETATTR over an in-process pipe.
 
 Remaining work for R3 (after the handle decision):
 - Resolve DEC-017; give the backend(s) FileHandle + a resolver.
