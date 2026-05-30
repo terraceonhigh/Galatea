@@ -100,15 +100,22 @@ Close any remaining gaps; run the full AC1–AC7 checklist.
   **Tag held** until AC4 + pynfs-proper land in CI so `v0.1` means the *full*
   checklist, not the headless subset.
 
-### R9 — GOAL B: the libfuse maneuver (the FUSE-T wedge)  ⬜ planned
+### R9 — GOAL B: the libfuse maneuver (the FUSE-T wedge)  🟡 spike gate MET (2026-05-30)
 
 A drop-in `libfuse.dylib` (libfuse 2.9 / macFUSE ABI) serviced by Galatea's NFS
 server via a `virtual` backend that forwards to the app's `fuse_operations` — so
 unmodified FUSE software (`sshfs`, `rclone mount`, …) runs on Galatea with no kext
 and no closed-source daemon. Full plan in [`GOAL-B-libfuse.md`](GOAL-B-libfuse.md).
-**Done when (spike):** libfuse's own `example/passthrough`, unmodified, mounts
-through our `libfuse.dylib` and round-trips a file. **Launch:** unmodified `sshfs`
-mounts read-write. This is the move that contests FUSE-T's actual userbase.
+- **Phase 0 ✅** — cgo c-shared callback mechanism de-risked in three gates.
+- **Phase 1a ✅** — the `fuseFS` translation layer (`shim/libfuse`), green against a
+  stub `hello` ops table (`TestFuseFSTranslation`).
+- **Phase 1b ✅ — LIVE GATE MET.** Upstream `example/hello.c`, **unmodified**,
+  compiled against `libgalateafuse.dylib`, mounted on macOS and served `ls` +
+  `cat "Hello World!"` through Galatea's NFSv4 server — no kext, no FUSE-T, no
+  root. The maneuver is real.
+- **Next:** the marquee — an unmodified real tool (`sshfs`/`rclone mount`) — then
+  the write path, then the long tail (full ops, FSKit). This is the move that
+  contests FUSE-T's actual userbase.
 
 ---
 

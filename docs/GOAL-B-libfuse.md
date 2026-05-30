@@ -1,6 +1,11 @@
 # GOAL B — the libfuse maneuver (the FUSE-T wedge)
 
-Status: **planned, not started.** This is the plan for Galatea's second goal (see
+Status: **spike gate MET (2026-05-30).** Phase 0 (cgo callback mechanism) and
+Phase 1 (the `fuseFS` translation + live mount) are done: upstream
+`example/hello.c`, unmodified, mounts read-only through `libgalateafuse.dylib`
+on macOS — no kext, no FUSE-T, no root. The maneuver is proven; the code is
+`shim/libfuse/`. What remains is breadth (the marquee tool, the write path, the
+long tail), not feasibility. This is the plan for Galatea's second goal (see
 [`GOAL.md`](GOAL.md) — "the libfuse C ABI / sshfs-rclone drop-in"). Milestone A
 (read-write NFSv4 mount on macOS, unprivileged) is the substrate this builds on
 and is functionally complete (see [`ACCEPTANCE.md`](ACCEPTANCE.md)).
