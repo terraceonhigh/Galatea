@@ -80,13 +80,19 @@ omitted (imports looked clean; the symbol cascade wasn't — the R2d lesson agai
 resolver. Keeps the lightweight node model. See DEC-017.
 
 So the R3 opener is now concrete:
-1. **Give the in-memory FSAL a `FileHandle`** (per-node stable id) set under
-   `AttributesMaskFileHandle` in `VirtualGetAttributes`, + a map-backed
-   `HandleResolver`. (`osfs` handles — inode-based — can follow at R4.)
-2. **Wire `cmd/galatea serve` / a `Serve`**: build the program over the backend,
-   register prog 100003, listen on loopback (or drive `HandleConnection` directly
-   for the test).
-3. **Smoke**: NULL, then PUTROOTFH+GETATTR over an in-process pipe.
+1. ✅ **In-memory FSAL `FileHandle`** — done. `memory.go` self-assigns an 8-byte
+   big-endian handle from each node's inode under `AttributesMaskFileHandle`
+   (`memoryFileHandle`); tested in `handle_test.go`. This unblocks
+   `NewNFS40Program` (which panicked reading the root handle). A map-backed
+   `HandleResolver` (handle → node) is still TODO — needed for LOOKUP/PUTFH browse
+   (R4); the NULL+PUTROOTFH+GETATTR smoke can use a stub resolver (never called).
+2. **A program convenience constructor** in `internal/nfsv4` (fill `NewNFS40Program`'s
+   args: `NewOpenedFilesPool(stubResolver)`, `random.NewFastSingleThreadedGenerator()`,
+   `clock.SystemClock`, zero verifier/prefix, lease times, `path.UNIXFormat`).
+3. **Smoke**: call `program.NfsV4Nfsproc4Null` then `NfsV4Nfsproc4Compound` with a
+   hand-built `Compound4args{PUTROOTFH, GETATTR}` **directly** (no rpcserver /
+   record-marking needed — that's the cheap path); assert `NFS4_OK`. Then, for the
+   full R3 gate, the same over `rpcserver.HandleConnection` via an in-process pipe.
 
 Remaining work for R3 (after the handle decision):
 - Resolve DEC-017; give the backend(s) FileHandle + a resolver.

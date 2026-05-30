@@ -2,8 +2,20 @@ package virtual
 
 import (
 	"context"
+	"encoding/binary"
 	"sort"
 )
+
+// memoryFileHandle encodes a node's stable inode number as an 8-byte NFS file
+// handle. This is the in-memory FSAL's half of DEC-017's Option B (backends
+// self-assign handles): the server reads it via AttributesMaskFileHandle, and a
+// resolver (handle → node) decodes the inode back. Big-endian so handles sort
+// the way inodes do.
+func memoryFileHandle(inode uint64) []byte {
+	h := make([]byte, 8)
+	binary.BigEndian.PutUint64(h, inode)
+	return h
+}
 
 // This file is a minimal, read-only in-memory FSAL. It exists to prove
 // the interface in pkg/virtual is implementable and exercisable without
@@ -49,6 +61,9 @@ func (f *memoryFile) fillAttributes(requested AttributesMask, a *Attributes) {
 	}
 	if requested&AttributesMaskInodeNumber != 0 {
 		a.SetInodeNumber(f.inode)
+	}
+	if requested&AttributesMaskFileHandle != 0 {
+		a.SetFileHandle(memoryFileHandle(f.inode))
 	}
 	if requested&AttributesMaskLinkCount != 0 {
 		a.SetLinkCount(1)
@@ -149,6 +164,9 @@ func (d *memoryDirectory) fillAttributes(requested AttributesMask, a *Attributes
 	}
 	if requested&AttributesMaskInodeNumber != 0 {
 		a.SetInodeNumber(d.inode)
+	}
+	if requested&AttributesMaskFileHandle != 0 {
+		a.SetFileHandle(memoryFileHandle(d.inode))
 	}
 	if requested&AttributesMaskLinkCount != 0 {
 		a.SetLinkCount(EmptyDirectoryLinkCount)
