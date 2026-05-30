@@ -195,11 +195,13 @@ func TestFileWrite(t *testing.T) {
 		t.Errorf("contents = %q, want %q", got, want)
 	}
 
-	// Truncate via SetAttributes(size).
+	// Truncate via SetAttributes(size). Pass requested=0 (ask for nothing
+	// back): the resize must follow what `in` carries, not the return mask —
+	// the bug a live `>` exposed.
 	var in Attributes
 	in.SetSizeBytes(3)
 	var out Attributes
-	if st := leaf.VirtualSetAttributes(context.Background(), &in, AttributesMaskSizeBytes, &out); st != StatusOK {
+	if st := leaf.VirtualSetAttributes(context.Background(), &in, 0, &out); st != StatusOK {
 		t.Fatalf("setattr(size=3) = %v", st)
 	}
 	n, _, _ = leaf.VirtualRead(buf, 0)

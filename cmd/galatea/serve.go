@@ -1,8 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net"
+	"os"
+	"strings"
 
 	nfssrv "github.com/terraceonhigh/galatea/internal/nfsv4"
 	nfsv4 "github.com/terraceonhigh/galatea/internal/xdr/pkg/protocols/nfsv4"
@@ -10,6 +14,30 @@ import (
 	"github.com/terraceonhigh/galatea/pkg/osfs"
 	"github.com/terraceonhigh/galatea/pkg/virtual"
 )
+
+// loggingProgram wraps an Nfs4Program and logs each COMPOUND's op sequence and
+// result status. Enabled by GALATEA_TRACE=1; a diagnosis aid for matching the
+// macOS client's actual op sequence (e.g. how `>` conveys truncate).
+type loggingProgram struct{ inner nfsv4.Nfs4Program }
+
+func (p loggingProgram) NfsV4Nfsproc4Null(ctx context.Context) error {
+	log.Print("NULL")
+	return p.inner.NfsV4Nfsproc4Null(ctx)
+}
+
+func (p loggingProgram) NfsV4Nfsproc4Compound(ctx context.Context, args *nfsv4.Compound4args) (*nfsv4.Compound4res, error) {
+	ops := make([]string, len(args.Argarray))
+	for i, a := range args.Argarray {
+		ops[i] = strings.TrimPrefix(fmt.Sprintf("%T", a), "*nfsv4.NfsArgop4_OP_")
+	}
+	res, err := p.inner.NfsV4Nfsproc4Compound(ctx, args)
+	status := "nil-res"
+	if res != nil {
+		status = fmt.Sprintf("%v", res.Status)
+	}
+	log.Printf("COMPOUND [%s] -> %s", strings.Join(ops, " "), status)
+	return res, err
+}
 
 // demoTree is a small read-only in-memory FSAL for `galatea serve` to expose.
 //
@@ -47,7 +75,10 @@ func doServe(hostDir, addr string) error {
 		}
 		root, resolver, label = r, osfs.NewHandleResolver(r), hostDir
 	}
-	program := nfssrv.NewReadOnlyProgram(root, resolver)
+	var program nfsv4.Nfs4Program = nfssrv.NewReadOnlyProgram(root, resolver)
+	if os.Getenv("GALATEA_TRACE") != "" {
+		program = loggingProgram{inner: program}
+	}
 	server := rpcserver.NewServer(
 		map[uint32]rpcserver.Service{
 			nfsv4.NFS4_PROGRAM_PROGRAM_NUMBER: nfsv4.NewNfs4ProgramService(program),

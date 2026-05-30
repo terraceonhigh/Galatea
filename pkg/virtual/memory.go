@@ -152,15 +152,15 @@ func (f *memoryFile) resize(size uint64) {
 func (f *memoryFile) VirtualSetAttributes(ctx context.Context, in *Attributes, requested AttributesMask, attributes *Attributes) Status {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if requested&AttributesMaskSizeBytes != 0 {
-		if size, ok := in.GetSizeBytes(); ok {
-			f.resize(size)
-		}
+	// Apply whatever `in` carries (its own fieldsPresent says which) — NOT what
+	// `requested` asks to read back. Keying off `requested` was a bug: the macOS
+	// client sends SETATTR(size=0) for `>` but requests a different return mask,
+	// so the truncate was silently skipped (found by tracing a live mount).
+	if size, ok := in.GetSizeBytes(); ok {
+		f.resize(size)
 	}
-	if requested&AttributesMaskPermissions != 0 {
-		if perms, ok := in.GetPermissions(); ok {
-			f.perms = perms
-		}
+	if perms, ok := in.GetPermissions(); ok {
+		f.perms = perms
 	}
 	f.fillAttributes(requested, attributes)
 	return StatusOK
