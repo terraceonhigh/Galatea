@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	nfssrv "github.com/terraceonhigh/galatea/internal/nfsv4"
 	nfsv4 "github.com/terraceonhigh/galatea/internal/xdr/pkg/protocols/nfsv4"
@@ -14,6 +15,17 @@ import (
 	"github.com/terraceonhigh/galatea/pkg/osfs"
 	"github.com/terraceonhigh/galatea/pkg/virtual"
 )
+
+// slowTree serves a read-only tree whose "slow.txt" sleeps `delay` on every
+// read (NewSlowMemoryFile). It is the R1 probe: does the macOS NFSv4 client
+// tolerate a single READ RPC that exceeds the NFSv3 RPC-timeout window, where
+// the v3 path stalled? Enabled by GALATEA_SLOW_READ=<duration>.
+func slowTree(delay time.Duration) virtual.Directory {
+	r := virtual.PermissionsRead
+	return virtual.NewMemoryDirectory(1, virtual.PermissionsRead|virtual.PermissionsExecute, map[string]virtual.Node{
+		"slow.txt": virtual.NewSlowMemoryFile(2, r, []byte("slow read complete\n"), delay),
+	})
+}
 
 // loggingProgram wraps an Nfs4Program and logs each COMPOUND's op sequence and
 // result status. Enabled by GALATEA_TRACE=1; a diagnosis aid for matching the
@@ -74,7 +86,12 @@ func doServe(hostDir, addr string) error {
 	var root virtual.Directory
 	var resolver virtual.HandleResolver
 	label := "in-memory demo tree [read-write]"
-	if hostDir == "" {
+	if d, err := time.ParseDuration(os.Getenv("GALATEA_SLOW_READ")); err == nil && d > 0 {
+		// R1 probe: a tree whose slow.txt sleeps `d` on read.
+		root = slowTree(d)
+		resolver = virtual.NewMemoryHandleResolver(root)
+		label = fmt.Sprintf("R1 slow-read tree (slow.txt reads sleep %s)", d)
+	} else if hostDir == "" {
 		root = demoTree()
 		resolver = virtual.NewMemoryHandleResolver(root)
 	} else {

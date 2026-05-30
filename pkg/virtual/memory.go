@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // NewMemoryHandleResolver builds a HandleResolver (DEC-017 Option B) over the
@@ -104,16 +105,26 @@ func childOf(n Node) DirectoryChild {
 // attribute reads of this file. Directory structure is a separate concern (the
 // directory's own concurrency); a memoryFile only guards its own bytes.
 type memoryFile struct {
-	mu       sync.Mutex
-	inode    uint64
-	perms    Permissions
-	contents []byte
+	mu        sync.Mutex
+	inode     uint64
+	perms     Permissions
+	contents  []byte
+	readDelay time.Duration // if >0, VirtualRead sleeps this long first
 }
 
 // NewMemoryFile returns an in-memory regular file with the given initial
 // contents. The file is writable (see VirtualWrite / VirtualSetAttributes).
 func NewMemoryFile(inode uint64, perms Permissions, contents []byte) Leaf {
 	return &memoryFile{inode: inode, perms: perms, contents: contents}
+}
+
+// NewSlowMemoryFile is NewMemoryFile whose every VirtualRead sleeps for delay
+// first — a backend whose read of one object is slow (e.g. a multi-minute
+// libmtp fetch). It stays a *memoryFile (so the handle resolver finds it); the
+// R1 probe uses it to test whether the macOS NFSv4 client tolerates a single
+// READ RPC longer than the NFSv3 RPC-timeout window.
+func NewSlowMemoryFile(inode uint64, perms Permissions, contents []byte, delay time.Duration) Leaf {
+	return &memoryFile{inode: inode, perms: perms, contents: contents, readDelay: delay}
 }
 
 // fillAttributes writes the requested attributes. The caller must hold f.mu
@@ -229,6 +240,11 @@ func (f *memoryFile) VirtualOpenSelf(ctx context.Context, shareAccess ShareMask,
 }
 
 func (f *memoryFile) VirtualRead(buf []byte, offset uint64) (int, bool, Status) {
+	if f.readDelay > 0 {
+		// Simulate a slow backend fetch — sleep before taking the lock so
+		// only this read is delayed, not concurrent ops on the file.
+		time.Sleep(f.readDelay)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	size := uint64(len(f.contents))
