@@ -52,15 +52,24 @@ import "C"
 
 import (
 	"context"
+	"fmt"
 	"hash/fnv"
 	"io"
+	"net"
+	"os"
+	"os/exec"
+	"os/signal"
 	"path"
 	"runtime/cgo"
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"unsafe"
 
+	nfssrv "github.com/terraceonhigh/galatea/internal/nfsv4"
+	nfsproto "github.com/terraceonhigh/galatea/internal/xdr/pkg/protocols/nfsv4"
+	"github.com/terraceonhigh/galatea/internal/xdr/pkg/rpcserver"
 	"github.com/terraceonhigh/galatea/pkg/virtual"
 )
 
@@ -460,6 +469,100 @@ func (f *fuseFile) VirtualOpenNamedAttributes(ctx context.Context, createDirecto
 func (f *fuseFile) VirtualAllocate(off, size uint64) virtual.Status { return virtual.StatusErrROFS }
 func (f *fuseFile) VirtualWrite(buf []byte, offset uint64) (int, virtual.Status) {
 	return 0, virtual.StatusErrROFS
+}
+
+// goArgs converts a C argv (argc, char**) into a Go []string.
+func goArgs(argc C.int, argv **C.char) []string {
+	n := int(argc)
+	if n <= 0 {
+		return nil
+	}
+	p := unsafe.Slice(argv, n)
+	out := make([]string, n)
+	for i := 0; i < n; i++ {
+		out[i] = C.GoString(p[i])
+	}
+	return out
+}
+
+// galateaFuseMain is the Go body behind the fuse_main(...) macro every libfuse
+// app calls. The C-ABI symbol fuse_main_real itself is defined in bridge.c
+// (matching fuse.h's exact signature) and forwards here — exporting a Go
+// function *named* fuse_main_real would clash with fuse.h's own declaration.
+// Instead of a kernel FUSE driver, this stands Galatea's NFSv4 server up over
+// the app's operations and mounts it with the stock macOS NFS client. Blocks
+// until SIGINT/SIGTERM, then unmounts — for the spike we don't implement
+// unmount-detection (fuse_main's "return on unmount" contract); a signal is the
+// clean teardown. op is the app's struct fuse_operations*, taken as
+// unsafe.Pointer (a typed C pointer isn't assignable across the bridge.c/Go cgo
+// boundary).
+//
+//export galateaFuseMain
+func galateaFuseMain(argc C.int, argv **C.char, op unsafe.Pointer) C.int {
+	args := goArgs(argc, argv)
+	// The mountpoint is the last non-option argument (a simplification that
+	// holds for hello.c and most simple invocations; full fuse_opt parsing is
+	// later work).
+	mountpoint := ""
+	for _, a := range args[1:] {
+		if !strings.HasPrefix(a, "-") {
+			mountpoint = a
+		}
+	}
+	if mountpoint == "" {
+		fmt.Fprintln(os.Stderr, "galatea-libfuse: no mountpoint found in argv")
+		return 1
+	}
+
+	root, resolver := NewFuseRoot(op)
+	var program nfsproto.Nfs4Program = nfssrv.NewReadOnlyProgram(root, resolver)
+	server := rpcserver.NewServer(
+		map[uint32]rpcserver.Service{
+			nfsproto.NFS4_PROGRAM_PROGRAM_NUMBER: nfsproto.NewNfs4ProgramService(program),
+		},
+		nfssrv.NewSystemAuthenticator(),
+	)
+
+	// Bind + listen synchronously, and start accepting, before mount_nfs — the
+	// client must find a listening, accepting server when it connects.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "galatea-libfuse: listen: %v\n", err)
+		return 1
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				_ = server.HandleConnection(conn, conn)
+				_ = conn.Close()
+			}()
+		}
+	}()
+
+	fmt.Printf("galatea-libfuse: serving NFSv4 on 127.0.0.1:%d → mounting at %s\n", port, mountpoint)
+	mnt := exec.Command("mount_nfs", "-o",
+		fmt.Sprintf("vers=4.0,port=%d,mountport=%d,tcp", port, port),
+		"localhost:/", mountpoint)
+	mnt.Stdout, mnt.Stderr = os.Stdout, os.Stderr
+	if err := mnt.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "galatea-libfuse: mount_nfs: %v\n", err)
+		_ = ln.Close()
+		return 1
+	}
+	fmt.Printf("galatea-libfuse: mounted at %s (Ctrl-C to unmount)\n", mountpoint)
+
+	sig := make(chan os.Signal, 1)
+	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
+	<-sig
+	fmt.Println("\ngalatea-libfuse: signal received, unmounting")
+	_ = exec.Command("umount", mountpoint).Run()
+	_ = ln.Close()
+	return 0
 }
 
 func main() {}
