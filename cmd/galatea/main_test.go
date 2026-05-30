@@ -26,11 +26,11 @@ func deterministicBytes(n int) []byte {
 func TestStreamLeafMultiChunk(t *testing.T) {
 	const bufSize = 32 * 1024
 	for _, size := range []int{
-		bufSize - 1,     // just under one buffer
-		bufSize,         // exactly one buffer
-		bufSize + 1,     // just over: forces a second iteration
-		2 * bufSize,     // exact multiple: boundary case
-		100 * 1024,      // many chunks with a partial tail
+		bufSize - 1, // just under one buffer
+		bufSize,     // exactly one buffer
+		bufSize + 1, // just over: forces a second iteration
+		2 * bufSize, // exact multiple: boundary case
+		100 * 1024,  // many chunks with a partial tail
 	} {
 		data := deterministicBytes(size)
 		leaf := virtual.NewMemoryFile(1, virtual.PermissionsRead, data)
