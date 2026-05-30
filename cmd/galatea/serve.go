@@ -78,11 +78,14 @@ func demoTree() virtual.Directory {
 	return root
 }
 
-// doServe stands the lifted NFSv4 server up on a loopback TCP port until
-// interrupted. With hostDir empty it serves the in-memory demo tree; otherwise
-// it serves that host directory read-only via osfs. This is the R3 → R4 bridge:
-// a real socket a macOS NFS client can connect to (proven live — DEC-018).
-func doServe(hostDir, addr string) error {
+// doServe stands the lifted NFSv4 server up on a loopback TCP port until ctx is
+// cancelled (SIGINT/SIGTERM, wired in main). With hostDir empty it serves the
+// in-memory demo tree; otherwise it serves that host directory read-only via
+// osfs. This is the R3 → R4 bridge: a real socket a macOS NFS client can connect
+// to (proven live — DEC-018). On ctx-cancel it closes the listener and returns
+// nil — graceful shutdown for AC6 (in-flight connections are left to drain; NFS
+// clients tolerate a server that restarts).
+func doServe(ctx context.Context, hostDir, addr string) error {
 	var root virtual.Directory
 	var resolver virtual.HandleResolver
 	label := "in-memory demo tree [read-write]"
@@ -123,9 +126,21 @@ func doServe(hostDir, addr string) error {
 	fmt.Printf("galatea: try:  mount_nfs -o vers=4.0,port=%d,mountport=%d,tcp localhost:/ /tmp/galatea-mnt\n", port, port)
 	fmt.Printf("galatea: then: ls /tmp/galatea-mnt   (Ctrl-C to stop)\n")
 
+	// Graceful shutdown: when ctx is cancelled, close the listener so the
+	// blocking Accept below returns. We then distinguish that expected
+	// wake-up (ctx.Err() != nil → return nil) from a genuine Accept error.
+	go func() {
+		<-ctx.Done()
+		_ = ln.Close()
+	}()
+
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
+			if ctx.Err() != nil {
+				fmt.Println("\ngalatea: signal received, shutting down")
+				return nil
+			}
 			return err
 		}
 		go func() {

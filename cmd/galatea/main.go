@@ -12,7 +12,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/terraceonhigh/galatea/pkg/osfs"
 	"github.com/terraceonhigh/galatea/pkg/virtual"
@@ -44,7 +46,10 @@ func main() {
 				hostDir = arg
 			}
 		}
-		if err := doServe(hostDir, addr); err != nil {
+		// Cancel the serve loop on SIGINT/SIGTERM for a graceful shutdown (AC6).
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := doServe(ctx, hostDir, addr); err != nil {
 			fatalf("%v", err)
 		}
 		return

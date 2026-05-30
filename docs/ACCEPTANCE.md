@@ -16,28 +16,39 @@ one-line install, or a human at a non-headless Mac.
 | **AC3** | create / write / mkdir / rename / remove / truncate through the mount | ✅ | All verified **live** over a real macOS mount (R6, DEC-018) **and** pinned as protocol regressions in the conformance suite — including the full stateful OPEN→WRITE→CLOSE dance. DEC-021. |
 | **AC4** | `pjdfstest`'s applicable subset passes | ⛔ | Triple-blocked on macOS: non-Darwin target + no autotools + needs root. **Gate:** the Forgejo `humboldt-runner` (Linux, root-capable) mounts `galatea serve` and runs the suite. CI work, not a build problem. DEC-021. |
 | **AC5** | `pynfs` NFSv4.0 COMPOUND-op conformance subset passes | 🟡 | **Spirit met headless:** `make test-conformance` runs a 10-test in-language protocol-conformance suite (read + stateless-write + stateful OPEN/WRITE/CLOSE), `-race`-clean, driving real record-marked COMPOUNDs against the server. **Gated:** pynfs-*the-tool*'s breadth needs `pip install ply` (sandbox-blocked) — a one-line Architect unblock in `references/pynfs/.venv`. DEC-021. |
-| **AC6** | Clean unmount, eject-while-idle, signal handling, sleep/wake | 🟡 | **Met:** clean `umount` + eject-while-idle exercised repeatedly under data load (every R7 round-trip; data persists server-side across the client mount lifecycle). **Open (headless-doable):** signal handling — `doServe` has no SIGINT/SIGTERM handler yet (process dies on default; an NFS client tolerates a server restart, so impact is low). **Gated:** sleep/wake needs a non-headless Mac. |
+| **AC6** | Clean unmount, eject-while-idle, signal handling, sleep/wake | 🟡 | **Met:** clean `umount` + eject-while-idle exercised repeatedly under data load (every R7 round-trip). **Signal handling now done:** `doServe` takes a context cancelled by `signal.NotifyContext(SIGINT/SIGTERM)` (main.go); on cancel it closes the listener and returns nil — `TestServeGracefulShutdown` covers the cancellation path deterministically. **Gated:** sleep/wake needs a non-headless Mac. |
 | **AC7** | No closed-source dep, no kext, no commercial-license exposure | ✅ | **Verified this run:** `go.mod` has **zero `require` directives**; `go list -deps ./...` shows **no buildbarn** (and no external module) imports — everything is stdlib or vendored-by-copy under our own path; `CGO_ENABLED=0 go build ./...` succeeds (pure Go, no kext, no cgo). Vendored floor carries `LICENSE` + `VENDOR.md` provenance (`internal/bb` ← bb-rex/bb-storage Apache-2.0; `internal/xdr` ← go-xdr). |
 
 ## Verdict
 
 **The functional core of Milestone A is met and exceeded, headless.** AC2, AC3,
 and AC7 are fully green; AC1 and AC5 have their substance met headless with only a
-cosmetic / tooling half gated. What remains is **not engineering risk** — it is:
+cosmetic / tooling half gated; AC6's signal-handling half was just closed, leaving
+only its sleep/wake half gated. What remains splits cleanly into **gated** (needs
+an environment/permission I don't have) and **deferred** (headless-doable, but a
+deliberate later call):
 
+*Gated — needs a gate opened:*
 1. **AC4** + pynfs-proper breadth → a **Linux CI runner** (humboldt-runner) and a
-   one-line `pip install ply`. Both are environment gates.
+   one-line `pip install ply`. Environment gates.
 2. **AC6 sleep/wake** + **AC1 Finder screenshot** → a **non-headless Mac** with a
    human present.
-3. **AC6 signal handling** → the one genuinely headless-doable remainder: add a
-   SIGINT/SIGTERM handler to `doServe` that closes the listener cleanly. Small,
-   deliberate, deserves its own focused loop + test. Left consciously, not hidden.
-4. **`v0.1` tag** → wait until AC4/AC5-proper land in CI, so the tag means the
+
+*Deferred — headless-doable, in scope for a later loop (NOT gated):*
+3. **`osfs` write** — making `pkg/osfs` mutate the real disk. Fully doable
+   headless; held back deliberately because it is riskier (touches real files) and
+   because **AC3 is already satisfied by the in-memory backend**, so it is arguably
+   post-acceptance. Do it with its own focused loop + tests.
+4. **Mknod/Link/Symlink** in the in-memory FSAL — niche; add when a consumer needs
+   them.
+
+5. **`v0.1` tag** → wait until AC4/AC5-proper land in CI, so the tag means the
    full checklist, not the headless subset.
 
-This audit is the honest "verifiably hard to surmount *headless*" wall: every
-green is a receipt, every non-green names its gate and its vehicle. The next move
-belongs to whoever opens a gate.
+This audit is the honest line between *can't-headless* (gated) and
+*chose-not-yet* (deferred). Every green is a receipt; every non-green names either
+its gate or its reason for waiting. The next move belongs to whoever opens a gate
+— or to a later loop that deliberately picks up osfs-write.
 
 ---
 

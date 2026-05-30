@@ -15,11 +15,14 @@ validated** — a 2m10s READ completed over NFSv4 where NFSv3 would have timed o
 write→server→remount→read byte-for-byte identical. **R5's headless half is done
 too** — `make test-conformance` runs a 10-test in-language protocol-conformance
 suite (read path + stateless write + the full stateful OPEN→WRITE→CLOSE dance),
-`-race`-clean. The central thesis is proven and exceeded. **The headless-tractable
-work is now essentially complete:** every remaining item is Architect- or
-Linux-CI-gated — pjdfstest (Linux CI), pynfs-proper (one `pip install ply`),
-osfs-write (real-disk, riskier), Mknod/Link/Symlink (niche), R7 sleep-wake, the
-Finder GUI screenshot.)
+`-race`-clean. AC6 signal handling is also done (graceful ctx-cancel shutdown).
+The central thesis is proven and exceeded. **The headless-tractable AC work is now
+essentially complete.** Remaining work splits two ways: **gated** (needs an
+environment I lack) — pjdfstest (Linux CI), pynfs-proper (one `pip install ply`),
+R7 sleep-wake + Finder screenshot (a non-headless Mac); and **deferred but
+headless-doable** (a deliberate later call, not blocked) — osfs-write (real-disk,
+riskier; AC3 already met by the in-memory backend) and Mknod/Link/Symlink (niche).
+Full receipts in [`ACCEPTANCE.md`](ACCEPTANCE.md).)
 **Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
 filesystem of our own).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
@@ -106,15 +109,15 @@ pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
 
 ## Cursor — next increment
 
-**The headless-tractable run is complete.** R0→R4 (live read mount), R6 (live
-write path), R1 (substrate bet), R7-AC2 (1 GB sustained transfer), and R5-headless
-(protocol-conformance suite) are all banked and green. Every remaining
-Milestone-A item is **Architect- or Linux-CI-gated** — this is the honest
-"verifiably hard to surmount headless" boundary the governing goal asked for, not
-a voluntary stop. ([`ROADMAP.md`](ROADMAP.md))
+**The headless-tractable AC work is complete.** R0→R4 (live read mount), R6 (live
+write path), R1 (substrate bet), R7-AC2 (1 GB sustained transfer), R5-headless
+(protocol-conformance suite), and AC6 signal handling (graceful ctx-cancel
+shutdown) are all banked and green. This is the honest "verifiably hard to surmount
+headless" boundary the governing goal asked for, not a voluntary stop — but note
+the distinction below between *gated* (can't, headless) and *deferred* (can, but a
+deliberate later call). ([`ROADMAP.md`](ROADMAP.md), [`ACCEPTANCE.md`](ACCEPTANCE.md))
 
-**Gated remainders** (pick when the gate opens; none is blocked on *building*, all
-on *environment/permission*):
+**Gated — needs a gate opened (environment/permission I lack):**
 
 - **pjdfstest** (POSIX-semantics-at-mountpoint) — non-Darwin + autotools + root.
   Vehicle: the Forgejo `humboldt-runner` (Linux, can be root) mounts `galatea
@@ -122,14 +125,18 @@ on *environment/permission*):
 - **pynfs-proper** (breadth protocol suite) — needs `pip install ply` (sandbox
   forbids). One-line Architect unblock in `references/pynfs/.venv`, then
   `./testserver.py localhost:/ ...` against `galatea serve`. DEC-021.
-- **osfs write** — make `pkg/osfs` mutate the real disk (today read-only). A
-  separate, riskier call than the in-memory proving ground; do it deliberately.
-- **Mknod/Link/Symlink** — still ROFS in the in-memory FSAL; niche for a Finder
-  data disk. Add if a consumer (Comprador/Stepford) needs them.
-- **R7 sleep-wake / signal lifecycle** (AC6's other half) — needs a non-headless
-  Mac (sleep the machine, observe the mount). AC2 endurance already measured.
+- **R7 sleep-wake** (AC6's other half) — needs a non-headless Mac (sleep the
+  machine, observe the mount). AC2 endurance + signal handling already done.
 - **Finder GUI screenshot** — human eyes on the Architect's Mac. Gates nothing;
   `ls`/`mount`/`df` confirm the mount programmatically. The satisfying visual.
+
+**Deferred — headless-doable, a deliberate later loop (NOT blocked):**
+
+- **osfs write** — make `pkg/osfs` mutate the real disk (today read-only). Fully
+  doable headless; held back because it is riskier (touches real files) and AC3 is
+  already met by the in-memory backend. Do it with its own focused loop + tests.
+- **Mknod/Link/Symlink** — still ROFS in the in-memory FSAL; niche for a Finder
+  data disk. Add if a consumer (Comprador/Stepford) needs them.
 
 **Banked, for reference:**
 - ✅ **R1 — substrate bet.** A 130 s slow READ completed over NFSv4 in 2m10s,

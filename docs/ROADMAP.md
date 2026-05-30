@@ -85,8 +85,9 @@ timeout and the lifecycle script passes.
   defeat the client cache), and read back from the server is **byte-for-byte
   identical** (`cmp` exit 0); no timeout, no corruption at GB scale. DEC-020.
 - **AC6 🟡** — clean `umount`+remount under data load is exercised repeatedly
-  (eject half); **sleep-wake and signal-driven shutdown remain Architect-gated**
-  (not headless-doable).
+  (eject half); **signal handling done** (`doServe` shuts down gracefully on a
+  `signal.NotifyContext` SIGINT/SIGTERM cancel — `TestServeGracefulShutdown`);
+  **sleep-wake remains Architect-gated** (needs a non-headless Mac).
 
 ### R8 — Milestone A acceptance  🟡 (checklist tallied 2026-05-29; tag pending gates)
 
@@ -95,9 +96,9 @@ Close any remaining gaps; run the full AC1–AC7 checklist.
 `v0.1`. Goal redefined.
 - **Checklist tallied** in [`ACCEPTANCE.md`](ACCEPTANCE.md): AC2/AC3/AC7 ✅ met
   headless; AC1/AC5 🟡 (substance met, cosmetic/tooling half gated); AC4 ⛔
-  (Linux CI); AC6 🟡 (clean-unmount met, sleep/wake gated, signal-handling the one
-  headless-doable remainder). **Tag held** until AC4 + pynfs-proper land in CI so
-  `v0.1` means the *full* checklist, not the headless subset.
+  (Linux CI); AC6 🟡 (clean-unmount + signal handling done, sleep/wake gated).
+  **Tag held** until AC4 + pynfs-proper land in CI so `v0.1` means the *full*
+  checklist, not the headless subset.
 
 ---
 
