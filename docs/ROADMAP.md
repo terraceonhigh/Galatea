@@ -109,13 +109,20 @@ and no closed-source daemon. Full plan in [`GOAL-B-libfuse.md`](GOAL-B-libfuse.m
 - **Phase 0 ✅** — cgo c-shared callback mechanism de-risked in three gates.
 - **Phase 1a ✅** — the `fuseFS` translation layer (`shim/libfuse`), green against a
   stub `hello` ops table (`TestFuseFSTranslation`).
-- **Phase 1b ✅ — LIVE GATE MET.** Upstream `example/hello.c`, **unmodified**,
+- **Phase 1b ✅ — LIVE READ GATE MET.** Upstream `example/hello.c`, **unmodified**,
   compiled against `libgalateafuse.dylib`, mounted on macOS and served `ls` +
   `cat "Hello World!"` through Galatea's NFSv4 server — no kext, no FUSE-T, no
-  root. The maneuver is real.
-- **Next:** the marquee — an unmodified real tool (`sshfs`/`rclone mount`) — then
-  the write path, then the long tail (full ops, FSKit). This is the move that
-  contests FUSE-T's actual userbase.
+  root.
+- **Phase 2 ✅ — WRITE PATH.** fuseFS is read-write (write/create-via-mknod+open/
+  mkdir/rename/remove/truncate/chmod). 2a: effects verified on a host temp dir
+  (`TestFuseFSWritePath`, incl. the SETATTR-size=0 truncate branch). 2b live: a
+  temp-dir passthrough (`fixture/passthrough.c`) mounted read-write — create+write
+  lands in the backing store, cmp-identical; mkdir/rename/unlink all clean.
+- **Next:** the marquee — an unmodified real tool (`sshfs`/`rclone mount`). NOTE:
+  this needs the dyld drop-in-replacement work (make `libgalateafuse.dylib`
+  masquerade as the installed `libfuse`) OR a from-source rebuild against the
+  shim — the "separate, later fight" the spike deliberately deferred. Then the
+  long tail (full ops, FSKit). This is the move that contests FUSE-T's userbase.
 
 ---
 
