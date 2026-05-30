@@ -9,9 +9,11 @@ loop updates. If this file and the code disagree, the code is truth — fix this
 **Updated:** 2026-05-29 (autonomous run: **R0→R4 + R6a + most of R6b DONE — Galatea
 is a working read-WRITE NFS filesystem on macOS**, live, headless, no root:
 read/write/append/truncate + create/mkdir/rm/rmdir/**rename** all verified over a
-real mount (`go test -race` clean). The central thesis is proven and exceeded.
-Cursor: R5 (pjdfstest conformance) / R1 (timeout) / osfs-write; Mknod/Link/Symlink
-are niche follow-ups. The Finder GUI screenshot is the only Architect-gated bit.)
+real mount (`go test -race` clean). **R1 (the founding substrate bet) is also
+validated** — a 2m10s READ completed over NFSv4 where NFSv3 would have timed out.
+The central thesis is proven and exceeded. Cursor: R5 (pjdfstest conformance) /
+R7 (endurance) / osfs-write; Mknod/Link/Symlink are niche follow-ups. The Finder
+GUI screenshot is the only Architect-gated bit.)
 **Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
 filesystem of our own).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
@@ -101,9 +103,11 @@ Milestone A:
   them); (2) the **`pjdfstest` write subset** + `make test-conformance` (R5);
   (3) `osfs` write (mutating the real disk) — a separate, later call; the
   in-memory FSAL is the read-write proving ground.
-- **R1 — the substrate bet (now runnable).** Measure that a multi-minute slow read
-  over the mount does *not* hit the RPC-timeout class that stalled NFSv3: put a
-  deliberately-slow backend behind `galatea serve` and time a large read.
+- ✅ **R1 — substrate bet VALIDATED (the founding premise).** A `slow.txt` whose
+  READ sleeps 130 s (`GALATEA_SLOW_READ=130s`), mounted via NFSv4: `cat` completed
+  in **2m10s, exit 0** — the macOS client held one READ RPC open >2× the ~60 s
+  NFSv3 timeout window with no stall. NFSv4 dodges the RPC-timeout class that
+  killed NFSv3. DEC-019.
 - ✅ **`osfs` handles — done.** `osfs` now provides path-relative file handles +
   `NewHandleResolver` + the mandatory attributes (M-006 contract), tested. `galatea
   serve <host-dir> [addr]` mounts a **real host directory** — verified live: served

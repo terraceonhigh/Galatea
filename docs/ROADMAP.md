@@ -18,15 +18,16 @@ The interface, two backends, a CLI driver.
 **Done when:** `pkg/virtual` + `pkg/osfs` + `cmd/galatea` build and `go test ./...`
 is green. ✅
 
-### R1 — De-risk the substrate bet
+### R1 — De-risk the substrate bet ✅ (done 2026-05-29, with Galatea's own server)
 
 Confirm NFSv4 over the macOS client does **not** hit the NFSv3 RPC-timeout class
-that motivated the project (the multi-minute libmtp stall). This is cheap and
-gates months of work — run it *before* the server lift.
-**Done when:** a documented measurement (in `docs/` or `MISTAKES.md`) shows a
-multi-minute slow read completing over an NFSv4 mount where the v3 path stalled —
-using any NFSv4 server (stock, FUSE-T, or a throwaway), Galatea's own not yet
-required.
+that motivated the project (the multi-minute libmtp stall).
+**Done when:** a documented measurement shows a multi-minute slow read completing
+over an NFSv4 mount where the v3 path stalled. ✅ **Measured:** a READ that slept
+130 s server-side (`GALATEA_SLOW_READ`) completed over a live NFSv4 mount in
+2m10s, exit 0 — one RPC held open >2× the ~60 s NFSv3 timeout, no stall. DEC-019.
+(Run *after* the lift rather than before, since the lifted server was ready; the
+bet is now confirmed with our own engine, not just FUSE-T.)
 
 ### R2 — Lift the NFSv4 server (DEC-007)
 

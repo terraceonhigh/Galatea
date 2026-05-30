@@ -827,3 +827,48 @@ real client tell you, guard with a test.
 in-memory FSAL implements DEC-017 Option B (handles + resolver) so far. Giving
 `osfs` inode-based handles + a resolver is the small step to mounting a *real host
 directory* — a natural R5/R6-adjacent task.
+
+---
+
+## DEC-019 — R1 validated: the macOS NFSv4 client tolerates a multi-minute READ; the substrate bet holds
+
+**Date:** 2026-05-29 · **Status:** accepted (measured live) · **Closes:** the R1
+gate that DEC-009 left open (it needed a server to mount; now there is one).
+
+**The question (the project's founding premise).** Comprador abandoned NFSv3
+because the macOS kernel NFS client's per-RPC timeout (~60 s) fired during
+multi-minute libmtp downloads, stalling transfers. Galatea bet that NFSv4 over
+the same client does *not* hit that timeout class (FUSE-T, an NFSv4 server,
+serves such workloads). R1 is the measurement that confirms the bet with *our*
+server.
+
+**The measurement.** A `slow.txt` whose every READ sleeps **130 s** server-side
+(`virtual.NewSlowMemoryFile`, served via `GALATEA_SLOW_READ=130s galatea serve`),
+mounted by the macOS kernel NFSv4 client, then `cat slow.txt`:
+
+```
+20:35:54 start
+slow read complete
+CAT_EXIT=0
+20:38:04 end          # elapsed 2m10s == the read delay
+```
+
+The client issued the READ RPC and **waited the full 2m10s** for the reply, then
+returned the data cleanly — no timeout, no retransmit storm, no stall. A single
+RPC outstanding for >2× the NFSv3 timeout window completed. (`ls`/GETATTR stayed
+instant; only the READ was slow, isolating the per-RPC behaviour.)
+
+**What it settles.** The substrate bet is empirically true on this Mac: NFSv4
+over the macOS client tolerates slow individual operations that would stall
+NFSv3. The architecture under Milestone A is validated — not just "FUSE-T does
+it" (DEC-009's circumstantial evidence) but "our lifted server does it,
+measured." Comprador's eventual MTPFSAL can take minutes per object without the
+timeout class biting.
+
+**Caveats / calibration.** (1) 2m10s exceeds the ~60 s NFSv3 default decisively,
+but I did not probe the *upper* bound (where, if anywhere, the NFSv4 client gives
+up) — 130 s sufficed to settle the question that mattered. (2) This is a single
+slow READ; a real transfer is many sequential slow reads — also fine (each is its
+own RPC), but sustained multi-GB endurance is R7, not measured here. (3) The slow
+delay is artificial (a `time.Sleep`), faithfully modelling a slow backend fetch;
+the real MTP backend's latency profile is Comprador's to characterise.
