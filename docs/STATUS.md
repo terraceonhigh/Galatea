@@ -6,9 +6,10 @@ loop updates. If this file and the code disagree, the code is truth — fix this
 
 ---
 
-**Updated:** 2026-05-29 (autonomous run: R1 gated; **R2 complete** — bb-rex NFSv4
-server lifted, de-coupled (zero buildbarn imports), green; cursor at R3 — serve
-on a socket)
+**Updated:** 2026-05-29 (autonomous run: R1 gated; **R2 complete + its behavioural
+gate met** — the lifted server *executes* a COMPOUND{PUTROOTFH,GETATTR} →
+NFS4_OK over the in-memory FSAL, in-process; cursor at R3 — serve over the wire +
+a real handle resolver)
 **Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
 filesystem of our own).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
@@ -45,17 +46,41 @@ pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
   the lift actually needed (`ByteRangeLock*`, `HandleResolver`, `Format`/
   `UNIXFormat`, `VirtualSymlink`→`Parser`). **`go list` shows zero buildbarn
   imports.** A latent upstream 4.1-SEQUENCE deadlock was caught by `go vet` and
-  fixed (M-005). DEC-016, `internal/nfsv4/VENDOR.md`. *Compiles + green; behaviour
-  (a COMPOUND) is R3.* **R2 is structurally complete.**
+  fixed (M-005). DEC-016, `internal/nfsv4/VENDOR.md`. **R2 structurally complete.**
+- **R2 behavioural gate MET (+ R3 in-process COMPOUND).** The lifted server now
+  *executes*: `internal/nfsv4.NewReadOnlyProgram(root)` over the in-memory FSAL,
+  then `NfsV4Nfsproc4Null` + `NfsV4Nfsproc4Compound{PUTROOTFH, GETATTR}` →
+  `NFS4_OK` (`internal/nfsv4/program_test.go`, in-process — no RPC framing). Got
+  there via DEC-017 Option B step 1 (in-memory `FileHandle`) + adding
+  `IsInNamedAttributeDirectory` to the FSAL (the server's FATTR4 type-encoding
+  reads it; surfaced as a panic, fixed). This is the DEC-011/016 smoke gate.
 
 ## Cursor — next increment
 
-**R3 — serve NFSv4 on a loopback socket.** ([`ROADMAP.md`](ROADMAP.md) R3)
+**R3 — serve NFSv4 over the wire (the in-process COMPOUND already works).**
+([`ROADMAP.md`](ROADMAP.md) R3)
 
-> **Done when:** `pynfs` (or a minimal client) completes a NULL call and a basic
-> COMPOUND (PUTROOTFH + GETATTR) against the running server over a loopback port.
-> This is also where the lifted server first *executes*, satisfying the re-scoped
-> R2 behavioural gate (a smoke COMPOUND vs the in-memory FSAL — DEC-011/016).
+> **Done when:** a NULL call + a basic COMPOUND (PUTROOTFH+GETATTR) complete
+> against the running server over a **loopback socket** (through
+> `rpcserver.HandleConnection` with ONC-RPC record marking) — `pynfs` or a minimal
+> in-tree client.
+>
+> **Already done (in-process):** the re-scoped R2 behavioural gate — the program
+> executes the same COMPOUND directly (`internal/nfsv4/program_test.go`). What
+> remains for R3 proper is the *RPC framing* layer around it.
+
+**Two remaining pieces for R3:**
+1. **Serve over the wire.** Wrap the program with `nfsv4.NewNfs4ProgramService`,
+   `rpcserver.NewServer({100003: service}, NewSystemAuthenticator())`, and drive
+   `HandleConnection(r, w)` over an in-process `net.Pipe` (smoke) or a loopback
+   TCP listener (`cmd/galatea serve`). The smoke client must build a record-marked
+   ONC-RPC CALL (xid, prog 100003, vers 4, proc 1, AUTH_SYS cred) wrapping the
+   `Compound4args` — the one laborious bit; crib framing from `rpcserver`'s reader.
+2. **A real `HandleResolver`** (DEC-017 Option B): the in-memory FSAL keeps a
+   `map[handle]Node` (register nodes as they're created/walked) so PUTFH/LOOKUP/
+   READ resolve. The current `NewReadOnlyProgram` stub rejects all handles —
+   fine for PUTROOTFH+GETATTR, *not* for browsing. Needed before R4 (a real mount
+   does LOOKUP/READDIR/READ).
 
 Everything the server needs to run now exists in-tree and green: the COMPOUND
 engine (`internal/nfsv4`), the wire codec + ONC-RPC record-marking loop
@@ -123,9 +148,10 @@ governs R2d's `clock`/`random` shims:
 **After R2:** R3 — wire `cmd/galatea serve` (rpcserver loop, NFS prog 100003) + a
 smoke COMPOUND test; then R4 — `open nfs://localhost:PORT/` to mount read-first.
 
-Loop step to resume at: **2 (Scope)** for R3 — design `cmd/galatea serve` (RPC
-prog 100003 on the `rpcserver` loop) + a COMPOUND smoke test. (R2 complete —
-server lifted & de-coupled, DEC-016.)
+Loop step to resume at: **4 (Implement)** for R3 — (1) serve over the wire
+(`rpcserver` + `HandleConnection`, record-marked client), (2) a real
+`HandleResolver` for the in-memory FSAL. The in-process COMPOUND already passes
+(R2 behavioural gate met). (R2 complete — DEC-016; server executes — this run.)
 
 > **Tooling gotchas this run:** (1) `cd` in Bash *persists* the working dir across
 > calls and breaks later relative-path commands — use absolute paths / `git -C`.
