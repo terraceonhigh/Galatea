@@ -571,3 +571,52 @@ them and fix `pkg/osfs` / the in-memory FSAL / `cmd/galatea`), the next incremen
 `FileType*`, `DeviceNumber`, `RegionType`, `FileInfo`, `Component`, `Parser`, all
 present), re-copy that file. If the dead `Directory`/`File*` interface surface
 proves a maintenance burden, trim per call #2 above.
+
+---
+
+## DEC-015 — R2c executed: `pkg/virtual`'s leaf types re-pointed via type *aliases*, not redefinition
+
+**Date:** 2026-05-29 · **Status:** accepted (executes DEC-011's wiring)
+
+**Decision.** `pkg/virtual`'s hand-cut leaf types (DEC-005) are retired and
+re-pointed at the vendored `internal/bb/filesystem{,/path}` types — done with Go
+**type aliases** (`type Component = path.Component`, `type FileType =
+filesystem.FileType`, …) plus const/constructor re-exports, rather than by
+rewriting every consumer to import the vendored packages directly.
+
+**Why aliases (the decision within the decision).** A literal re-type would have
+touched ~170 use-sites across `pkg/virtual`, `pkg/osfs`, the in-memory FSAL, and
+`cmd/galatea`. Aliases achieve DEC-011's actual goal — *one* type shared between
+the interface and the lifted server, zero boundary conversion — at near-zero
+churn: `virtual.FileType` now **is** `filesystem.FileType`, so existing
+`virtual.*` references keep compiling and the server (R2d), speaking
+`filesystem.FileType` directly, meets the interface with no adapter. Aliases also
+preserve the promise (made to Minerve, letter 03) that a backend author's whole
+dependency surface is the `virtual` package: the leaf types and their
+constructors (`NewComponent`, `MustNewComponent`, `NewFileInfo`) are re-exported,
+so a backend need not import `internal/bb`.
+
+**The one semantic change.** `Attributes.symlinkTarget` went from `string` (the
+DEC-005 simplification, justified then by "MTP has no symlinks") back to
+`path.Parser` (via the `Parser` alias), and `Get/SetSymlinkTarget` with it —
+matching bb-rex, so the server's `pathParserToLinktext4` path resolves without
+conversion. Blast radius was nil: no code (backends, CLI, or tests) called
+`Get/SetSymlinkTarget`.
+
+**Verification.** `go build/vet/test/fmt ./...` all green — the existing R0 suite
+(`pkg/virtual` behaviour + memory + `pkg/osfs`) re-verified the swap untouched,
+which is exactly the safety net DEC-011 counted on. `doc.go` updated: the package
+is no longer "stdlib-only" in isolation (it imports `internal/bb`), but the module
+stays free of any dependency outside the standard library.
+
+**What would change this.** If a future consumer needs to *construct* a leaf type
+the aliases don't re-export a constructor for (e.g. `NewDeviceNumberFromRaw`), add
+the re-export. If the alias indirection ever obscures more than it saves, inline
+`filesystem.*`/`path.*` at the call sites — but not before there's a reason.
+
+**Next:** R2d — copy the bb-rex server files (`nfs40_program`, `nfs41_program`,
+`opened_files_pool`, `minor_version_fallback`, `metrics_program` with prometheus
+stripped, a localhost `system_authenticator`) into Galatea, rewrite imports onto
+`pkg/virtual` + the vendored `internal/bb`/`internal/xdr`, shim `clock`/`random`,
+and compile. Then a Galatea smoke COMPOUND test (PUTROOTFH+GETATTR) against the
+in-memory FSAL closes the re-scoped R2 gate.

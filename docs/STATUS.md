@@ -7,7 +7,7 @@ loop updates. If this file and the code disagree, the code is truth — fix this
 ---
 
 **Updated:** 2026-05-29 (autonomous run: R1 gated; R2a + serving-foundation +
-**R2b** done; (A) confirmed reachable; cursor at R2c)
+**R2b + R2c** done; (A) confirmed reachable; cursor at R2d — the server lift)
 **Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
 filesystem of our own).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
@@ -30,47 +30,48 @@ pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
   copied, grpc-status error idiom stripped to stdlib, `x/sys/unix` dev_t packing
   reimplemented inline (kept the module dependency-free). Builds/vets/tests/fmt
   green standalone; path smoke test guards the strip. DEC-014, `internal/bb/VENDOR.md`.
-  *Not yet wired into anything — that's R2c.*
+- **R2c — `pkg/virtual` re-pointed onto the vendored types.** `types.go`'s
+  hand-cut leaf types retired, replaced by **aliases** (`Component`=`path.Component`,
+  `FileType`=`filesystem.FileType`, …) + const/constructor re-exports;
+  `Attributes.symlinkTarget` reverted `string`→`path.Parser`. Aliases → the server
+  (R2d) meets the interface with zero type conversion; ~170 use-sites untouched.
+  R0 suite re-verified green. DEC-015.
 
 ## Cursor — next increment
 
-**R2c — re-point `pkg/virtual`'s leaf types to the vendored `path`/`filesystem`
-(execute DEC-011's wiring).** ([`ROADMAP.md`](ROADMAP.md) R2)
+**R2d — lift bb-rex's NFSv4 server into Galatea (the heart of R2).**
+([`ROADMAP.md`](ROADMAP.md) R2)
 
-> **Done when:** `pkg/virtual` uses `internal/bb/filesystem{,/path}` for its leaf
-> types (`Component`/`Parser`; `FileType`/`DeviceNumber`/`RegionType`/`FileInfo`),
-> the hand-cut natives in `types.go` are retired, and `pkg/osfs` + the in-memory
-> FSAL + `cmd/galatea` are re-typed accordingly — with `go build/vet/test/fmt
-> ./...` green (the existing R0 suite re-verifies the swap).
+> **Done when:** the lifted server package compiles in-tree against `pkg/virtual`
+> + the vendored `internal/bb` / `internal/xdr`, with `go build/vet/test/fmt
+> ./...` green and `go list` showing no `buildbarn/*` import. (bb-rex's gomock
+> test mountain is out of scope — DEC-011; a Galatea smoke COMPOUND test is the
+> behavioural gate, folded into R3.)
 
-R2b (vendor `path`+`filesystem`) is **done** — DEC-014. The vendored packages
-exist, compile, and are dependency-free; R2c wires them in. Then R2d lifts the
-server, which — with `pkg/virtual` and the server both on the vendored leaf
-types — resolves by import-rewrite with zero boundary type-conversion.
+R2a/R2b/R2c are done: the wire codec (`internal/xdr`), the leaf types
+(`internal/bb`), and the interface (`pkg/virtual`) are all in place and on the
+*same* types the server speaks — so the lift is import-rewrite + shim, not
+redesign. Remaining work for R2d, from the coupling map:
 
-Investigation done — the map for the next session:
+- **Copy** `nfs40_program.go`, `nfs41_program.go`, `opened_files_pool.go`,
+  `minor_version_fallback_program.go`, `metrics_program.go` from bb-rex's
+  `pkg/filesystem/virtual/nfsv4/` into Galatea (likely `internal/nfsv4/` or
+  `pkg/nfsv4/` — decide at lift). Rewrite imports: `bb-rex/.../virtual` →
+  `pkg/virtual`; `bb-storage/pkg/filesystem{,/path}` → `internal/bb/...`;
+  `go-xdr/...` → `internal/xdr/...`.
+- **Shim** `clock` (Clock iface + Now) and `random` (SingleThreadedGenerator) —
+  tiny, stdlib-backed (vendor by symbol, NOT `util` wholesale — see ⚠ below).
+- **Strip** `metrics_program.go`'s prometheus to no-ops.
+- **Replace** `system_authenticator.go` with a trivial localhost AUTH_SYS
+  authenticator (no auth/jmespath/eviction).
+- **Watch for** the type fork being truly closed (it should be — R2c aligned the
+  types) and any *other* bb-storage symbol the server pulls that the floor missed
+  (the R2b `x/sys/unix` surprise says: trust `go build`, not the map).
 
-- **Server `virtual.*` surface** (nfs40): entirely interface/attributes/status/
-  permissions — **all already in `pkg/virtual`.** No handle-allocator or CAS
-  types. The server does *not* need the CAS machinery lifted. ✅ big de-risk.
-- **Server external deps to handle:**
-  - `go-xdr` — vendored (R2a). ✅
-  - `path` — vendored & stripped to stdlib ✅ (R2b, DEC-014).
-  - `filesystem` — vendored ✅ (R2b); leaf types only, `x/sys/unix` inlined.
-  - `clock` (Clock iface + Now), `random` (SingleThreadedGenerator) — tiny shims.
-  - `prometheus` (nfs40 metrics) — strip to no-ops.
-  - `auth`/`jmespath`/`eviction` — **don't vendor**; replace `system_authenticator.go`
-    with a trivial localhost AUTH_SYS authenticator.
-
-Done this run toward R2: **rpcserver + a self-contained errgroup vendored**
-(spike/serving foundation, committed, green). Strategy refined (DEC-013): the
-"spike" is realized as **lifting bb-rex read-path-first**, not a from-scratch
-server (hand-writing correct FATTR4/READDIR/state-handshake is slower than lifting
-the complete impl). So the path forward is R2 proper, sequenced read-first.
-
-**R2b is done** (DEC-014; full recipe & provenance now in `internal/bb/VENDOR.md`).
-The caution that informed it still governs R2d's remaining shims (`clock`,
-`random` — vendor by symbol, not whole):
+The server's `virtual.*` surface is entirely interface/attributes/status/
+permissions — **all in `pkg/virtual`**, no handle-allocator/CAS types (a big R2d
+de-risk, measured in `coupling-map.md`). The caution that governed R2a/R2b still
+governs R2d's `clock`/`random` shims:
 
 > **⚠ Do NOT vendor `util` wholesale** — it pulls jsonnet, protobuf, grpc,
 > prometheus, uuid. The "8-package floor" (coupling-map) is *symbol*-light but
@@ -78,17 +79,12 @@ The caution that informed it still governs R2d's remaining shims (`clock`,
 > nothing from util survives the error-wrapper strip). Same caution for any floor
 > package taken whole.
 
-- **R2c** — execute DEC-011: re-point `pkg/virtual` leaf types to the vendored
-  `path`/`filesystem`; fix `pkg/osfs`, the in-memory FSAL, `cmd/galatea`; re-verify.
-- **R2d** — copy the server files (`nfs40_program`, `nfs41_program`,
-  `opened_files_pool`, `minor_version_fallback`, `metrics_program` with prometheus
-  stripped, a localhost `system_authenticator`), rewrite imports, compile; smoke
-  COMPOUND test vs the in-memory FSAL.
-- **R3/R4** — wire `cmd/galatea serve` (rpcserver loop, NFS prog 100003), then
-  `open nfs://localhost:PORT/` to mount read-first.
+**After R2:** R3 — wire `cmd/galatea serve` (rpcserver loop, NFS prog 100003) + a
+smoke COMPOUND test; then R4 — `open nfs://localhost:PORT/` to mount read-first.
 
-Loop step to resume at: **4 (Implement)** for R2c — re-point `pkg/virtual`'s leaf
-types to the vendored packages. (R2b done — DEC-014.)
+Loop step to resume at: **4 (Implement)** for R2d — lift the bb-rex server files
+into the tree and rewrite imports onto `pkg/virtual` + `internal/{bb,xdr}`.
+(R2a/R2b/R2c done — DEC-010/014/015.)
 
 > **Tooling gotchas this run:** (1) `cd` in Bash *persists* the working dir across
 > calls and breaks later relative-path commands — use absolute paths / `git -C`.

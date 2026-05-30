@@ -56,9 +56,9 @@ const (
 
 // Attributes of a file, normally requested through stat() or readdir().
 // A bitmask tracks which attributes are set. Transcribed from bb-rex's
-// virtual.Attributes; the symlink target is a plain string here rather
-// than bb-storage's path.Parser (see DEC-005 — MTP has no symlinks, and
-// reproducing the path-parsing subsystem is out of scope for the seed).
+// virtual.Attributes. The symlink target is a path.Parser (via the Parser
+// alias), matching bb-rex — DEC-005's string simplification is reverted in
+// DEC-011 so the lifted server meets this interface without conversion.
 type Attributes struct {
 	fieldsPresent AttributesMask
 
@@ -75,7 +75,7 @@ type Attributes struct {
 	ownerUserID                     uint32
 	permissions                     Permissions
 	sizeBytes                       uint64
-	symlinkTarget                   string
+	symlinkTarget                   Parser
 }
 
 // GetFieldsPresent returns the mask of attributes that have been set.
@@ -270,12 +270,12 @@ func (a *Attributes) SetSizeBytes(sizeBytes uint64) *Attributes {
 }
 
 // GetSymlinkTarget returns the target of a symbolic link.
-func (a *Attributes) GetSymlinkTarget() (string, bool) {
+func (a *Attributes) GetSymlinkTarget() (Parser, bool) {
 	return a.symlinkTarget, a.fieldsPresent&AttributesMaskSymlinkTarget != 0
 }
 
 // SetSymlinkTarget sets the target of a symbolic link.
-func (a *Attributes) SetSymlinkTarget(symlinkTarget string) *Attributes {
+func (a *Attributes) SetSymlinkTarget(symlinkTarget Parser) *Attributes {
 	a.symlinkTarget = symlinkTarget
 	a.fieldsPresent |= AttributesMaskSymlinkTarget
 	return a

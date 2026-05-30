@@ -1,113 +1,65 @@
 package virtual
 
-import "strings"
+// This file re-points Galatea's FSAL leaf types to the vendored bb-storage
+// types (internal/bb/filesystem and .../path), replacing the hand-cut natives
+// introduced in DEC-005. They are *aliases*, not redefinitions: virtual.Component
+// IS path.Component, virtual.FileType IS filesystem.FileType, and so on. That
+// matters because the NFSv4 server lifted from bb-rex (R2d) speaks the vendored
+// types directly — so with the interface here aliased to the same types, the
+// server satisfies it with zero type conversion at the boundary. See DEC-011
+// (the type fork resolved toward vendoring) and DEC-014 (the vendor itself).
+//
+// Re-exporting the leaf types and their constructors through this package also
+// keeps the promise that a backend author's entire dependency surface is the
+// `virtual` package: an FSAL implementation need not import internal/bb.
 
-// This file holds the leaf types Galatea provides in place of the
-// bb-storage types bb-rex's virtual package referenced
-// (filesystem.FileType, path.Component, and so on). They are reproduced
-// here, in Galatea's own package, so the FSAL interface depends on
-// nothing outside the standard library. See DEC-005.
-
-// Component of a pathname: a string guaranteed to be a valid Unix
-// filename. Transcribed from bb-storage's path.Component, minus the
-// Windows validator (Galatea is macOS-only).
-type Component struct {
-	name string
-}
-
-// NewComponent creates a pathname component. It fails when the name is
-// empty, ".", "..", or contains a slash or NUL.
-func NewComponent(name string) (Component, bool) {
-	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\x00") {
-		return Component{}, false
-	}
-	return Component{name: name}, true
-}
-
-// MustNewComponent is NewComponent that panics on an invalid name.
-func MustNewComponent(name string) Component {
-	c, ok := NewComponent(name)
-	if !ok {
-		panic("invalid component name: " + name)
-	}
-	return c
-}
-
-func (c Component) String() string {
-	return c.name
-}
-
-// FileType enumerates the type of a file. Transcribed from bb-storage's
-// filesystem.FileType; the iota order is preserved so values match the
-// source we lift the NFSv4 server from later.
-type FileType int
-
-const (
-	// FileTypeRegularFile means the file is a regular file.
-	FileTypeRegularFile FileType = iota
-	// FileTypeDirectory means the file is a directory.
-	FileTypeDirectory
-	// FileTypeSymlink means the file is a symbolic link.
-	FileTypeSymlink
-	// FileTypeBlockDevice means the file is a block device.
-	FileTypeBlockDevice
-	// FileTypeCharacterDevice means the file is a character device.
-	FileTypeCharacterDevice
-	// FileTypeFIFO means the file is a FIFO.
-	FileTypeFIFO
-	// FileTypeSocket means the file is a socket.
-	FileTypeSocket
-	// FileTypeOther means the file is of none of the above types.
-	FileTypeOther
+import (
+	"github.com/terraceonhigh/galatea/internal/bb/filesystem"
+	"github.com/terraceonhigh/galatea/internal/bb/filesystem/path"
 )
 
-// RegionType distinguishes data from holes for sparse-file seeking.
-// Transcribed from bb-storage's filesystem.RegionType; the values (1, 2)
-// match SEEK_DATA/SEEK_HOLE conventions in the source.
-type RegionType int
-
-const (
-	// Data is the start of a region containing data.
-	Data RegionType = 1
-	// Hole is the start of a region that is a hole.
-	Hole RegionType = 2
+// Leaf types, aliased to the vendored packages.
+type (
+	// Component is a pathname component: a string guaranteed to be a valid
+	// filename.
+	Component = path.Component
+	// Parser parses a pathname string into a sequence of components. A
+	// symbolic-link target takes this type.
+	Parser = path.Parser
+	// FileType enumerates the type of a file.
+	FileType = filesystem.FileType
+	// RegionType distinguishes data from holes for sparse-file seeking.
+	RegionType = filesystem.RegionType
+	// DeviceNumber identifies a device by major and minor number.
+	DeviceNumber = filesystem.DeviceNumber
+	// FileInfo is the name-and-type triple GetFileInfo returns.
+	FileInfo = filesystem.FileInfo
 )
 
-// DeviceNumber identifies a device by major and minor number.
-// Transcribed from bb-storage's filesystem.DeviceNumber.
-type DeviceNumber struct {
-	major uint32
-	minor uint32
-}
+// File type constants.
+const (
+	FileTypeRegularFile     = filesystem.FileTypeRegularFile
+	FileTypeDirectory       = filesystem.FileTypeDirectory
+	FileTypeSymlink         = filesystem.FileTypeSymlink
+	FileTypeBlockDevice     = filesystem.FileTypeBlockDevice
+	FileTypeCharacterDevice = filesystem.FileTypeCharacterDevice
+	FileTypeFIFO            = filesystem.FileTypeFIFO
+	FileTypeSocket          = filesystem.FileTypeSocket
+	FileTypeOther           = filesystem.FileTypeOther
 
-// NewDeviceNumberFromMajorMinor builds a DeviceNumber from its parts.
-func NewDeviceNumberFromMajorMinor(major, minor uint32) DeviceNumber {
-	return DeviceNumber{major: major, minor: minor}
-}
+	// Data and Hole are the RegionType values used by VirtualSeek.
+	Data = filesystem.Data
+	Hole = filesystem.Hole
+)
 
-// ToMajorMinor decomposes a DeviceNumber back into major and minor.
-func (d DeviceNumber) ToMajorMinor() (uint32, uint32) {
-	return d.major, d.minor
-}
-
-// FileInfo is the name-and-type pair GetFileInfo returns. Transcribed
-// from bb-storage's filesystem.FileInfo (the subset the FSAL uses).
-type FileInfo struct {
-	name         Component
-	fileType     FileType
-	isExecutable bool
-}
-
-// NewFileInfo constructs a FileInfo.
-func NewFileInfo(name Component, fileType FileType, isExecutable bool) FileInfo {
-	return FileInfo{name: name, fileType: fileType, isExecutable: isExecutable}
-}
-
-// Name returns the component name of the file.
-func (fi *FileInfo) Name() Component { return fi.name }
-
-// Type returns the file's type.
-func (fi *FileInfo) Type() FileType { return fi.fileType }
-
-// IsExecutable reports whether the file carries the execute permission.
-func (fi *FileInfo) IsExecutable() bool { return fi.isExecutable }
+// Constructors, re-exported so callers keep using the virtual.* names (and so a
+// backend need only import this package).
+var (
+	// NewComponent creates a pathname component, reporting whether the name
+	// is valid (non-empty, not "." or "..", no slash or NUL).
+	NewComponent = path.NewComponent
+	// MustNewComponent is NewComponent that panics on an invalid name.
+	MustNewComponent = path.MustNewComponent
+	// NewFileInfo constructs a FileInfo.
+	NewFileInfo = filesystem.NewFileInfo
+)
