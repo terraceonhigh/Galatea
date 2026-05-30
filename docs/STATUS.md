@@ -8,7 +8,7 @@ loop updates. If this file and the code disagree, the code is truth — fix this
 
 **Updated:** 2026-05-29 (autonomous run: **R0→R4 read-only + R6a write path DONE —
 Galatea mounts live on macOS, headless, no root, and serves a read-WRITE tree**
-(write + append land over NFS; truncate-on-open is a known R6b trace item). The
+(write + append + truncate all land correctly over NFS). The
 central thesis is proven. Cursor: R6b (dir mutation + truncate) / R5 (conformance)
 / R1 (timeout). The Finder GUI screenshot is the only Architect-gated bit.)
 **Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
@@ -70,11 +70,13 @@ pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
   attempt, now guarded by `TestMemoryMandatoryAttributes`).
 - **R6a — writable in-memory files (read-WRITE over a live mount).** `memoryFile`
   is mutable under a per-file mutex (write/zero-extend/truncate/allocate);
-  `TestFileWrite` covers it. **Live-verified:** `printf … > mnt/README.txt` and
-  `>>` append both landed over the macOS NFS mount and read back. Galatea now
-  serves a read-write filesystem. *Known issue:* open-with-truncate (`>`) leaves
-  the old tail — FSAL truncate is correct (unit-tested), so the macOS client's
-  O_TRUNC isn't reaching the FSAL over the wire; needs a COMPOUND trace (R6b).
+  `TestFileWrite` covers it. **Live-verified:** `printf … > mnt/README.txt`
+  (truncating write), `>>` append, and read-back all correct over the macOS NFS
+  mount — `> file` yields exactly the new bytes. Galatea now serves a read-write
+  filesystem. The earlier truncate-on-`>` glitch was a `VirtualSetAttributes` bug
+  (applied the `requested` *return* mask instead of what `in` carried) — found by
+  an env-gated COMPOUND op-trace (`GALATEA_TRACE=1`) of the live client, fixed,
+  and the test strengthened to catch it.
 
 ## Cursor — next increment
 
@@ -89,14 +91,12 @@ Milestone A:
   `pynfs` NFSv4.0 read subset against a live `galatea serve` mount; enumerate
   exclusions; stand up `make test-conformance`. Runnable headless now (mounting
   works; `pjdfstest` is a C suite executed at the mountpoint).
-- **R6 — the write path.** *R6a done* (in-memory file contents are writable;
-  read-write proven live). **R6b remaining:** (1) **directory mutation** —
-  CREATE/MKDIR/REMOVE/RENAME (the in-memory dir still returns `StatusErrROFS`;
-  this needs tree-level locking, since creating/removing mutates the children map
-  while reads traverse it — the concurrency design R6a deliberately deferred);
-  (2) **truncate-on-open** — trace the macOS client's `>` COMPOUND sequence and
-  wire its O_TRUNC to the FSAL (FSAL-level truncate already works); (3) the
-  `pjdfstest` write subset. `osfs` write (mutating the real disk) is a separate,
+- **R6 — the write path.** *R6a done* (in-memory file contents are writable —
+  write/append/truncate proven live). **R6b remaining:** (1) **directory
+  mutation** — CREATE/MKDIR/REMOVE/RENAME (the in-memory dir still returns
+  `StatusErrROFS`; needs tree-level locking, since creating/removing mutates the
+  children map while reads traverse it — the concurrency design R6a deliberately
+  deferred); (2) the `pjdfstest` write subset. `osfs` write (mutating the real disk) is a separate,
   later call.
 - **R1 — the substrate bet (now runnable).** Measure that a multi-minute slow read
   over the mount does *not* hit the RPC-timeout class that stalled NFSv3: put a
