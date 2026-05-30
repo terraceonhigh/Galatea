@@ -11,11 +11,15 @@ is a working read-WRITE NFS filesystem on macOS**, live, headless, no root:
 read/write/append/truncate + create/mkdir/rm/rmdir/**rename** all verified over a
 real mount (`go test -race` clean). **R1 (the founding substrate bet) is also
 validated** — a 2m10s READ completed over NFSv4 where NFSv3 would have timed out.
-**R7's AC2 (sustained transfer) is validated too** — a 1 GB payload round-trips
-write→server→remount→read byte-for-byte identical. The central thesis is proven
-and exceeded. Cursor: R5 (pjdfstest conformance) / osfs-write; Mknod/Link/Symlink
-are niche follow-ups. Architect-gated remainders: the Finder GUI screenshot and
-R7's sleep-wake half.)
+**R7's AC2 (sustained transfer) is validated** — a 1 GB payload round-trips
+write→server→remount→read byte-for-byte identical. **R5's headless half is done
+too** — `make test-conformance` runs a 10-test in-language protocol-conformance
+suite (read path + stateless write + the full stateful OPEN→WRITE→CLOSE dance),
+`-race`-clean. The central thesis is proven and exceeded. **The headless-tractable
+work is now essentially complete:** every remaining item is Architect- or
+Linux-CI-gated — pjdfstest (Linux CI), pynfs-proper (one `pip install ply`),
+osfs-write (real-disk, riskier), Mknod/Link/Symlink (niche), R7 sleep-wake, the
+Finder GUI screenshot.)
 **Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
 filesystem of our own).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
@@ -90,54 +94,64 @@ pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
   passed identically too. The multi-GB ceiling is the demo FSAL's in-RAM `[]byte`,
   not the protocol. DEC-020. (AC6's eject half is exercised by the repeated clean
   remounts; **sleep-wake + signal-shutdown stay Architect-gated**.)
+- **R5 (headless half) — CONFORMANCE SUITE GREEN.** `make test-conformance` stands
+  up an in-language protocol suite (`internal/nfsv4/conformance_test.go`) driving
+  real record-marked ONC-RPC COMPOUNDs against the lifted server — 10 tests,
+  `-race`-clean: read path (GETATTR/LOOKUP/READ/ACCESS/READDIR + NOENT/STALE
+  edges), stateless write (CREATE/REMOVE/RENAME), and the **full stateful
+  OPEN→WRITE→CLOSE dance** (SETCLIENTID/CONFIRM/OPEN_CONFIRM/WRITE/CLOSE +
+  read-back). Turns the R4/R6 *live* behaviours into permanent regressions.
+  pjdfstest (non-Darwin/autotools/root → Linux CI) and pynfs (`pip install ply`
+  sandbox-blocked → one-line Architect unblock) are deferred, not skipped. DEC-021.
 
 ## Cursor — next increment
 
-**R5 — conformance** (Milestone A's main remaining gate; the write path R6 and
-R7's sustained-transfer half AC2 are banked). ([`ROADMAP.md`](ROADMAP.md))
+**The headless-tractable run is complete.** R0→R4 (live read mount), R6 (live
+write path), R1 (substrate bet), R7-AC2 (1 GB sustained transfer), and R5-headless
+(protocol-conformance suite) are all banked and green. Every remaining
+Milestone-A item is **Architect- or Linux-CI-gated** — this is the honest
+"verifiably hard to surmount headless" boundary the governing goal asked for, not
+a voluntary stop. ([`ROADMAP.md`](ROADMAP.md))
 
-R0→R4 read-only is done and live (DEC-018), the write path R6 is live and
-race-clean, and R7's AC2 is validated to 1 GB byte-identical (DEC-020). What
-remains for Milestone A:
+**Gated remainders** (pick when the gate opens; none is blocked on *building*, all
+on *environment/permission*):
 
-- **R5 — read-only conformance.** Run the read-applicable `pjdfstest` subset and a
-  `pynfs` NFSv4.0 read subset against a live `galatea serve` mount; enumerate
-  exclusions; stand up `make test-conformance`. Runnable headless now (mounting
-  works; `pjdfstest` is a C suite executed at the mountpoint).
-- **R6 — the write path: the in-memory FSAL is fully read-write, proven live.**
-  create/write/append/truncate/mkdir/rm/rmdir/**rename** all work over a real
-  macOS NFS mount, via `NewWritableMemoryDirectory` (per-dir lock + shared inode
-  counter; rename takes the two-dir lock ordered by inode) + the live-walk
-  `HandleResolver`. `go test -race ./pkg/virtual` is clean. **Still open for R6:**
-  (1) Mknod/Link/Symlink (still ROFS — niche; a Finder data disk rarely needs
-  them); (2) the **`pjdfstest` write subset** + `make test-conformance` (R5);
-  (3) `osfs` write (mutating the real disk) — a separate, later call; the
-  in-memory FSAL is the read-write proving ground.
-- ✅ **R1 — substrate bet VALIDATED (the founding premise).** A `slow.txt` whose
-  READ sleeps 130 s (`GALATEA_SLOW_READ=130s`), mounted via NFSv4: `cat` completed
-  in **2m10s, exit 0** — the macOS client held one READ RPC open >2× the ~60 s
-  NFSv3 timeout window with no stall. NFSv4 dodges the RPC-timeout class that
-  killed NFSv3. DEC-019.
-- ✅ **`osfs` handles — done.** `osfs` now provides path-relative file handles +
-  `NewHandleResolver` + the mandatory attributes (M-006 contract), tested. `galatea
-  serve <host-dir> [addr]` mounts a **real host directory** — verified live: served
-  the repo's `docs/` over NFSv4, `ls` listed all 7 files and `head GOAL.md` read it
-  over the mount, clean `umount`. (Caveat: path handles are bounded by NFS4_FHSIZE
-  ≈128 B; deeply-nested paths would need an inode/hash scheme — future.)
+- **pjdfstest** (POSIX-semantics-at-mountpoint) — non-Darwin + autotools + root.
+  Vehicle: the Forgejo `humboldt-runner` (Linux, can be root) mounts `galatea
+  serve` and runs the suite. CI work, not local. DEC-021.
+- **pynfs-proper** (breadth protocol suite) — needs `pip install ply` (sandbox
+  forbids). One-line Architect unblock in `references/pynfs/.venv`, then
+  `./testserver.py localhost:/ ...` against `galatea serve`. DEC-021.
+- **osfs write** — make `pkg/osfs` mutate the real disk (today read-only). A
+  separate, riskier call than the in-memory proving ground; do it deliberately.
+- **Mknod/Link/Symlink** — still ROFS in the in-memory FSAL; niche for a Finder
+  data disk. Add if a consumer (Comprador/Stepford) needs them.
+- **R7 sleep-wake / signal lifecycle** (AC6's other half) — needs a non-headless
+  Mac (sleep the machine, observe the mount). AC2 endurance already measured.
+- **Finder GUI screenshot** — human eyes on the Architect's Mac. Gates nothing;
+  `ls`/`mount`/`df` confirm the mount programmatically. The satisfying visual.
 
-**R5 is the main remaining headless gate** — it hardens the read+write paths that
-already work live (R6) against an external conformance suite. After R5: osfs-write
-(mutating the real disk) and the niche Mknod/Link/Symlink. **Architect-gated
-deferrals** (none block Milestone A's substance): a human-eyes Finder GUI
-screenshot, and R7's sleep-wake/signal lifecycle half — `ls`/`mount`/`df` verify
-the mount programmatically, and AC2 endurance is already measured (DEC-020).
+**Banked, for reference:**
+- ✅ **R1 — substrate bet.** A 130 s slow READ completed over NFSv4 in 2m10s,
+  exit 0 — >2× the ~60 s NFSv3 timeout, no stall. DEC-019.
+- ✅ **R7-AC2 — 1 GB write→remount→read byte-identical** (`cmp` exit 0). DEC-020.
+- ✅ **R5-headless — 10-test protocol-conformance suite** (`make test-conformance`),
+  read + stateless-write + stateful OPEN→WRITE→CLOSE, `-race`-clean. DEC-021.
+- ✅ **`osfs` read handles** — path-relative handles + `NewHandleResolver` + the
+  mandatory attrs; `galatea serve <host-dir>` served the repo `docs/` live.
+  (Caveat: path handles bounded by NFS4_FHSIZE ≈128 B; deep nesting needs an
+  inode/hash scheme — future, and a prerequisite for osfs-write at depth.)
 
 > **⚠ Do NOT vendor `util` wholesale** — jsonnet/protobuf/grpc/prometheus/uuid;
 > vendor by symbol. (Retained; applies to any future bb-storage grab, e.g. R6.)
 
-Loop step to resume at: **2 (Scope)** for R5 — restate its "Done when", then
-investigate `references/pjdfstest` (the BSD-2 C suite) against a live `galatea
-serve` mount. R0→R7-AC2 is banked and green.
+Loop step to resume at: **the headless loop has reached its boundary.** R0→R6,
+R1, R7-AC2, and R5-headless are banked and green. The next increments need a gate
+to open (a Linux CI runner for pjdfstest, a one-line `pip install ply` for pynfs,
+a non-headless Mac for sleep-wake/Finder, or a deliberate decision to start
+osfs-write). Resume at **step 2 (Scope)** for whichever gate the Architect opens
+next — or open the R8 acceptance checklist to tally AC1–AC7 and see what a `v0.1`
+tag would still need.
 
 > **Tooling gotchas this run:** (1) `cd` in Bash *persists* the working dir across
 > calls and breaks later relative-path commands — use absolute paths / `git -C`.

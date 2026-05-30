@@ -53,11 +53,21 @@ DiskArbitration. Surface the `osfs` backend as a volume.
 `ls`/`cat` work at the mountpoint; clean unmount. (First "it actually mounts"
 demo.)
 
-### R5 — Read-only conformance
+### R5 — Conformance  🟡 (headless half ✅ done 2026-05-29; external suites gated)
 
 Stand up `make test-conformance`; pass the read-applicable `pjdfstest` subset and
 the `pynfs` NFSv4.0 read-path subset.
 **Done when:** the defined read subsets pass green; exclusions enumerated.
+- **Headless half ✅** — `make test-conformance` stood up; an **in-language**
+  protocol-conformance suite (`internal/nfsv4/conformance_test.go`, real
+  record-marked COMPOUNDs over the wire) passes 10 tests `-race`-clean: the read
+  path (GETATTR/LOOKUP/READ/ACCESS/READDIR + NOENT/STALE edges), the stateless
+  write path (CREATE/REMOVE/RENAME), and the **full stateful OPEN→WRITE→CLOSE
+  dance** with read-back. DEC-021.
+- **External suites ⛔ gated** — `pjdfstest` is non-Darwin + needs autotools +
+  root (→ Linux CI on `humboldt-runner`); `pynfs` needs a `pip install ply` the
+  sandbox forbids (→ one-line Architect unblock). These are the POSIX-at-mount and
+  breadth-protocol complements, deferred, not skipped. DEC-021.
 
 ### R6 — Write path
 

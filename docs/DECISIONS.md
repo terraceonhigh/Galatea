@@ -925,3 +925,70 @@ persisting server-side across the client's mount lifecycle — but **sleep-wake*
 remains Architect-gated (not headless-doable), as does the signal-driven server
 shutdown path. (3) Throughput (64–256 MB/s) is uncharacterised beyond "ample for
 a Finder data volume"; not a tuning target at Milestone A.
+
+---
+
+## DEC-021 — R5 (headless half): an in-language protocol-conformance suite, after pjdfstest and pynfs both proved blocked on this Mac
+
+**Date:** 2026-05-29 · **Status:** accepted · **Advances:** the R5 gate (its
+headless-tractable half); **defers** the rest to a Linux client / CI.
+
+**The problem.** R5 wanted `make test-conformance` passing a `pjdfstest` subset
+and a `pynfs` read subset against a live mount. On *this* Mac, both external
+suites are blocked — verifiably, not by my choice:
+
+- **pjdfstest** is triple-blocked: it targets FreeBSD/Linux/Solaris (Darwin is
+  not a supported OS), its build needs autotools (`autoreconf`/`automake`/
+  `autoconf` — none installed), and its README says "you must be root." Three
+  independent walls, any one disqualifying for a headless, rootless run here.
+- **pynfs** (the protocol suite) is pure-Python and the *right* shape — it talks
+  NFSv4 to our port as a client, no mount/root/Darwin-compile — but its codegen
+  step (`setup.py build_ext`) needs the `ply` module, and the only way to get it
+  is `pip install`, which the sandbox **blocks by policy**. `xdrlib` is present
+  (Python 3.9), so the *only* missing piece is `ply`; a one-line Architect
+  `pip install ply` in a venv would unblock pynfs-proper later.
+
+**The decision.** Route around both with an **in-language conformance suite**
+(`internal/nfsv4/conformance_test.go`), built on the same hand-rolled
+record-marked ONC-RPC harness as `wire_test.go`. It drives real COMPOUNDs over a
+`net.Pipe` against the lifted server and asserts protocol conformance. `make
+test-conformance` runs it (`go test -run TestConformance`). 10 tests, all green
+under `-race`:
+
+- **Read path:** GETATTR(type,size); LOOKUP→READ (anonymous all-zero stateid,
+  valid per RFC 7530 §9.1.4.3) asserting the bytes; ACCESS asserting READ
+  granted; READDIR; plus the **error edges** — LOOKUP of a missing name →
+  `NFS4ERR_NOENT`, PUTFH of a bogus handle → `NFS4ERR_STALE`/`BADHANDLE`.
+- **Stateless write path** (no open-owner state): CREATE(dir)→verify, REMOVE→
+  verify-gone, RENAME→verify-moved-and-source-gone.
+- **Stateful write capstone:** the full NFSv4.0 dance — SETCLIENTID,
+  SETCLIENTID_CONFIRM, OPEN(create), the conditional OPEN_CONFIRM for a fresh
+  owner, WRITE, CLOSE — then a fresh COMPOUND reads the bytes back. The same
+  sequence the live macOS client performed (R4/R6), now a permanent regression.
+  (Sequencing notes for the next reader: open-owner seqid starts at 0 and bumps
+  per owner-op; the server *does* set `OPEN4_RESULT_CONFIRM` for a new owner, so
+  the confirm round-trip is exercised; WRITE/CLOSE use the post-confirm stateid.)
+
+**Why this is the right call, not a cop-out.** The value isn't lower than pynfs's
+— it's *different and arguably higher* for this project: it converts behaviours
+previously proven only by **ephemeral live mounts** (which leave no CI artifact)
+into **permanent, in-language, race-clean regression tests** that run with zero
+external friction. It is also honest about scope (below).
+
+**What is and isn't covered (the honest split, à la R7's AC2/AC6).**
+- ✅ *Protocol conformance, headless:* done here — the wire-level COMPOUND
+  semantics of the read and write paths.
+- ⛔ *POSIX-semantics-at-mountpoint* (pjdfstest's domain — permission/owner edge
+  cases, errno fidelity through the kernel VFS): deferred to a **Linux NFS client
+  in CI** (the Forgejo `humboldt-runner` could mount our server and run pjdfstest
+  there; Linux is a supported target and CI can be root).
+- ⛔ *pynfs's hundreds of protocol tests:* deferred behind the one-line `ply`
+  install; our suite is a curated subset, not pynfs's breadth. **Not** marking R5
+  wholesale "done" — the *headless half* is done; the external-suite half is
+  Architect/CI-gated.
+
+**The boundary this draws.** With this suite green, the remaining Milestone-A work
+is genuinely gated, not merely unstarted: pjdfstest (Linux CI), pynfs-proper (one
+`pip install`), sleep-wake lifecycle (a non-headless Mac), the Finder screenshot
+(human eyes), and osfs-write (a separate, riskier real-disk call). That is the
+honest "verifiably hard to surmount headless" line the governing goal asked for.
