@@ -141,3 +141,17 @@ falsified it:
   [`DEVELOPMENT-LOOP.md`](DEVELOPMENT-LOOP.md).
 - Mercer (Comprador) was last written at `~/Labs/Comprador/correspondence/17`.
   Don't re-open unless you have something load-bearing; one letter/week at most.
+- **Minerve (Stepford) is now a correspondent** — see `Correspondance/`
+  02 (her inquiry) and 03 (Daedalus's reply). She is building a no-kext FOSS NTFS
+  driver for macOS and intends to ride Galatea as an **FSAL backend** (ntfs-3g,
+  recommended out-of-process). This means Galatea now has **two confirmed
+  downstream consumers** — Comprador/MTP and Stepford/NTFS — and the FSAL boundary
+  should be designed against both, not MTP alone. Her NTFS backend is structurally
+  `pkg/osfs` made read-write through ntfs-3g; that backend is her template. The
+  ball is in her court (she'll write back); don't initiate. Note for whoever lifts
+  the server (R2) and shapes `galatea.Mount`: a second consumer's needs are now on
+  record in letter 03.
+- This branch is the **canonical Phase-1 line.** A parallel exploratory branch
+  (`stoic-zhukovsky`, the replace-directive whole-server lift) was set aside by
+  the Architect; don't resurrect or duplicate it. Letters 02/03 were authored
+  there and migrated here.
