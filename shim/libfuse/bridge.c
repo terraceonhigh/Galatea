@@ -25,9 +25,10 @@ int call_readdir(const struct fuse_operations *op, const char *path, uintptr_t b
  * galateaFuseMain — exporting a Go function named fuse_main_real would conflict
  * with fuse.h's declaration of the same symbol. op_size and user_data are
  * accepted for ABI compatibility and ignored. */
+extern void galatea_set_user_data(void *ud); /* fuse_compat.c */
 int fuse_main_real(int argc, char *argv[], const struct fuse_operations *op,
                    size_t op_size, void *user_data) {
 	(void)op_size;
-	(void)user_data;
+	galatea_set_user_data(user_data); /* so fuse_get_context()->private_data works */
 	return galateaFuseMain(argc, argv, (void *)op);
 }
