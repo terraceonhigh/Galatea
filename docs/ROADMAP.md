@@ -100,6 +100,16 @@ Close any remaining gaps; run the full AC1–AC7 checklist.
   **Tag held** until AC4 + pynfs-proper land in CI so `v0.1` means the *full*
   checklist, not the headless subset.
 
+### R9 — GOAL B: the libfuse maneuver (the FUSE-T wedge)  ⬜ planned
+
+A drop-in `libfuse.dylib` (libfuse 2.9 / macFUSE ABI) serviced by Galatea's NFS
+server via a `virtual` backend that forwards to the app's `fuse_operations` — so
+unmodified FUSE software (`sshfs`, `rclone mount`, …) runs on Galatea with no kext
+and no closed-source daemon. Full plan in [`GOAL-B-libfuse.md`](GOAL-B-libfuse.md).
+**Done when (spike):** libfuse's own `example/passthrough`, unmodified, mounts
+through our `libfuse.dylib` and round-trips a file. **Launch:** unmodified `sshfs`
+mounts read-write. This is the move that contests FUSE-T's actual userbase.
+
 ---
 
 **Rough envelope** (solo, part-time): R1 an afternoon; R2 1–3 wks; R3–R5 ~3–4
