@@ -3,8 +3,52 @@ package virtual
 import (
 	"context"
 	"encoding/binary"
+	"io"
 	"sort"
 )
+
+// NewMemoryHandleResolver builds a HandleResolver (DEC-017 Option B) over the
+// in-memory tree rooted at root, which must be an in-memory directory. It walks
+// the tree once, indexing every node by its inode, and returns a resolver that
+// decodes the 8-byte inode handle (see memoryFileHandle) back to its node. The
+// NFSv4 server needs this so a client's PUTFH — replaying a handle it obtained
+// from an earlier GETFH — resolves to the right node.
+//
+// The index is a snapshot taken at construction. That is correct for this
+// read-only FSAL (the tree is immutable); a mutable backend would maintain the
+// index as nodes come and go.
+func NewMemoryHandleResolver(root Directory) HandleResolver {
+	index := map[uint64]Node{}
+	var walk func(n Node)
+	walk = func(n Node) {
+		switch t := n.(type) {
+		case *memoryDirectory:
+			index[t.inode] = t
+			for _, c := range t.children {
+				walk(c)
+			}
+		case *memoryFile:
+			index[t.inode] = t
+		}
+	}
+	walk(root)
+
+	return func(r io.ByteReader) (DirectoryChild, Status) {
+		var h [8]byte
+		for i := range h {
+			b, err := r.ReadByte()
+			if err != nil {
+				return DirectoryChild{}, StatusErrBadHandle
+			}
+			h[i] = b
+		}
+		n, ok := index[binary.BigEndian.Uint64(h[:])]
+		if !ok {
+			return DirectoryChild{}, StatusErrStale
+		}
+		return childOf(n), StatusOK
+	}
+}
 
 // memoryFileHandle encodes a node's stable inode number as an 8-byte NFS file
 // handle. This is the in-memory FSAL's half of DEC-017's Option B (backends

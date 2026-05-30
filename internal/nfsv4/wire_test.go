@@ -128,7 +128,7 @@ func newTestProgram() nfsv4.Nfs4Program {
 	root := virtual.NewMemoryDirectory(1, virtual.PermissionsRead|virtual.PermissionsExecute, map[string]virtual.Node{
 		"hello.txt": virtual.NewMemoryFile(2, virtual.PermissionsRead, []byte("hi")),
 	})
-	return NewReadOnlyProgram(root)
+	return NewReadOnlyProgram(root, virtual.NewMemoryHandleResolver(root))
 }
 
 func TestWireNull(t *testing.T) {
