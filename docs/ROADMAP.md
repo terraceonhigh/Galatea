@@ -118,11 +118,21 @@ and no closed-source daemon. Full plan in [`GOAL-B-libfuse.md`](GOAL-B-libfuse.m
   (`TestFuseFSWritePath`, incl. the SETATTR-size=0 truncate branch). 2b live: a
   temp-dir passthrough (`fixture/passthrough.c`) mounted read-write — create+write
   lands in the backing store, cmp-identical; mkdir/rename/unlink all clean.
-- **Next:** the marquee — an unmodified real tool (`sshfs`/`rclone mount`). NOTE:
-  this needs the dyld drop-in-replacement work (make `libgalateafuse.dylib`
-  masquerade as the installed `libfuse`) OR a from-source rebuild against the
-  shim — the "separate, later fight" the spike deliberately deferred. Then the
-  long tail (full ops, FSKit). This is the move that contests FUSE-T's userbase.
+- **Phase 3 ✅ — the fuse_opt ABI layer.** A real tool calls more than fuse_main:
+  the `fuse_opt_*` family, `fuse_get_context`, `fuse_version`. Vendored upstream
+  `fuse_opt.c` (LGPL→GPL) + `fuse_compat.c` (`fuse_version`, `fuse_get_context`
+  with `private_data`). Proven with `fixture/optfs.c` — a from-source FUSE program
+  using `fuse_opt_parse` (`-o root=DIR`) + `fuse_main(user_data)` +
+  `fuse_get_context()->private_data`, mounted live through Galatea. The shim now
+  speaks the sshfs-class call pattern.
+- **Next (marquee, gated):** a *famous-named* tool. The engineering is done (optfs
+  is a from-source real-FUSE-tool on the shim); what's left is acquiring one. The
+  walls: modern `sshfs` is FUSE3 (shim is 2.9); FUSE-2.x tools (`ntfs-3g`, old
+  `sshfs`, `bindfs`) are autotools projects and `autoconf`/`automake`/`meson`
+  aren't installed; `rclone` (cgofuse) is plausible but needs the cgofuse-loads-
+  our-dylib path worked out. A focused from-source build session with a toolchain
+  install — the correct model is relink-against-the-shim (FUSE-T's own), not a
+  binary hijack. Then the long tail (full ops, FSKit).
 
 ---
 
