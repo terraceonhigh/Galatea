@@ -62,15 +62,36 @@ engine (`internal/nfsv4`), the wire codec + ONC-RPC record-marking loop
 (`internal/xdr/pkg/{runtime,protocols,rpcserver}`), the localhost AUTH_SYS
 authenticator, and two backends to serve (`pkg/virtual` in-memory, `pkg/osfs`).
 
-Remaining work for R3:
-- Add a `cmd/galatea serve` subcommand (or a `pkg`-level `Serve`): build an
-  `internal/nfsv4` program over a chosen backend, register it as RPC program
-  100003 (NFS) on the `rpcserver` loop, listen on a loopback TCP port.
-- Drive it: a NULL call first, then PUTROOTFH+GETATTR. In-memory FSAL for the
-  deterministic smoke test; `osfs` for a real tree. A Galatea-authored test
-  suffices; `pynfs` (in `references/`) is the conformance option.
-- Expect macOS-client-quirk discovery to begin here — what COMPOUND sequence the
-  real client sends at mount. Journal findings (R5 leaking early).
+**Serving API — mapped (R3 investigation, this run):** wiring is small —
+`service := nfsv4.NewNfs4ProgramService(program)` yields exactly a
+`rpcserver.Service`; `rpcserver.NewServer(map[uint32]Service{nfsv4.NFS4_PROGRAM_`
+`PROGRAM_NUMBER (100003): service}, authenticator)`; then `server.HandleConnection`
+`(r, w)` per connection. The smoke test can drive `HandleConnection` over an
+in-memory pipe — no TCP or pynfs needed for NULL + PUTROOTFH+GETATTR.
+
+**⚠ R3 PREREQUISITE discovered (the real next decision) — handle allocation.**
+`NewNFS40Program` reads the root's `FileHandle` attribute at construction (panics
+if unset), and `NewOpenedFilesPool` needs a `virtual.HandleResolver` (handle →
+node) for PUTFH/LOOKUP/READ. **The R0 backends (`pkg/virtual` in-memory, `osfs`)
+implement neither** — they were built to satisfy the interface *shape* + the CLI
+navigator, not the server's handle model. So running the server needs, first, a
+**handle-allocation story** (DEC-017, open):
+- Option A — **lift bb-rex's handle allocator** (`nfs_handle_allocator.go` +
+  `handle_allocator.go`, left in `references/`): the "lift, don't write" path;
+  integrates FileHandle assignment + resolution with the FSAL. Has its own
+  de-couple surface to measure.
+- Option B — **backends self-assign** handles (e.g. inode-number-derived) +
+  a Galatea-written resolver. Simpler for osfs/in-memory; less general.
+A minimal NULL + PUTROOTFH+GETATTR smoke could use a *stub* resolver (never
+called by that COMPOUND) **once the root provides a FileHandle** — so even the
+smoke needs at least minimal FileHandle support in the backend.
+
+Remaining work for R3 (after the handle decision):
+- Resolve DEC-017; give the backend(s) FileHandle + a resolver.
+- Add `cmd/galatea serve` / a `pkg`-level `Serve`: build the program over a
+  backend, register prog 100003, listen on loopback.
+- Drive it: NULL, then PUTROOTFH+GETATTR (in-memory FSAL, in-process pipe).
+- Expect macOS-client-quirk discovery to begin (R5 leaking early); journal it.
 
 > **⚠ Do NOT vendor `util` wholesale** — jsonnet/protobuf/grpc/prometheus/uuid.
 > (Retained from R2; applies to any future bb-storage symbol grab.)

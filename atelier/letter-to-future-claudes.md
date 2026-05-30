@@ -39,17 +39,30 @@ path, `/Users/terrace/Labs/Galatea/references/...`).
   ~8-package stdlib-shaped floor. The de-coupling is a *file-level package split*,
   not a utility shim. This corrected Mercer's "4–6 packages" estimate.
 - `pkg/virtual` exists: Galatea's public FSAL interface, hand-cut from bb-rex,
-  **bb-storage-free**, plus a read-only in-memory FSAL and green tests.
-- Every decision is journaled in `docs/DECISIONS.md` (DEC-001 … DEC-005). Read
-  them before second-guessing a choice — the reasoning and the "what would change
+  plus a read-only in-memory FSAL and green tests.
+- **R2 is now complete — the whole NFSv4 server is lifted and de-coupled.** The
+  later run (2026-05-29 evening) carried it the rest of the way: vendored
+  `path`+`filesystem` (R2b, stripped to stdlib), re-pointed `pkg/virtual`'s leaf
+  types onto the vendored ones via *aliases* (R2c — so the server meets the
+  interface with zero conversion), vendored `clock`+`random`, and lifted the
+  server itself into **`internal/nfsv4`** (R2d). `go list -deps ./internal/nfsv4 |
+  grep buildbarn` now returns **nothing**. The type fork (DEC-005) was resolved
+  toward vendoring (DEC-011); see DEC-014/015/016 and the `VENDOR.md` files under
+  `internal/`.
+- Every decision is journaled in `docs/DECISIONS.md` (now through DEC-017). Read
+  the relevant ones before second-guessing — the reasoning and "what would change
   this" are there.
 
-**The next move** is the big one: lift bb-rex's NFSv4 server (`nfs40_program.go`,
-~112 KB) and reconcile it with `pkg/virtual`. The unresolved fork (DEC-005): the
-server's method signatures use bb-storage's `path.Component`/`filesystem.FileType`,
-but our interface uses Galatea-native types — so either sed-rewrite the server's
-types, or keep them and adapt at the boundary. Decide that *with the server code in
-front of you*, and journal it as DEC-006.
+**The next move (R3): serve, but first decide handle allocation (DEC-017, open).**
+The serving wiring is small and mapped (`nfsv4.NewNfs4ProgramService` →
+`rpcserver.NewServer` → `HandleConnection`; a smoke COMPOUND can run over an
+in-process pipe). But running the server surfaced a real gap: it is built around
+**file handles**, and the R0 backends (in-memory, `osfs`) provide none —
+`NewNFS40Program` would panic reading the root's `FileHandle`. So R3 is gated on a
+handle-allocation decision: lift bb-rex's handle allocator (Option A) or have
+backends self-assign (Option B). STATUS's cursor and DEC-017 lay it out. Decide it
+with the code in front of you; a minimal NULL+GETATTR smoke needs only a root
+FileHandle + a stub resolver.
 
 **Terms of art.** "FSAL" = filesystem abstraction layer (the `Directory`/`Leaf`
 interface a host plugs into). "The floor" = the irreducible bb-storage dependency

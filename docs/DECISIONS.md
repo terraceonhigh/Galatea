@@ -681,4 +681,58 @@ no external importers yet.
 **Next:** R3 — wire `cmd/galatea serve` (the vendored `internal/xdr/pkg/rpcserver`
 loop + the localhost authenticator + COMPOUND dispatch into `internal/nfsv4`) and
 prove a NULL call + a basic COMPOUND against the running server (pynfs or a
-minimal client). That is also where the lifted server first *executes*.
+minimal client). That is also where the lifted server first *executes* — gated on
+DEC-017.
+
+---
+
+## DEC-017 — Handle allocation is R3's gating decision (OPEN) — backends don't yet provide file handles
+
+**Date:** 2026-05-29 · **Status:** provisional (fork named, not yet chosen) ·
+**Surfaced by:** the R3 serving investigation, immediately after R2d.
+
+**The discovery.** Wiring the lifted server to actually *run* (R3) surfaced a gap
+the lift itself didn't: the server is built around **file handles** the FSAL must
+supply, and Galatea's R0 backends don't supply them.
+- `NewNFS40Program` reads the root directory's `FileHandle` attribute at
+  construction and **panics if it's unset** (`Attributes.GetFileHandle()`).
+- `NewOpenedFilesPool` takes a `virtual.HandleResolver` (`func(io.ByteReader)
+  (DirectoryChild, Status)`) to turn a PUTFH/LOOKUP handle back into a node.
+- Grepping `pkg/virtual`'s in-memory FSAL and `pkg/osfs`: **neither sets
+  `AttributesMaskFileHandle` nor offers any handle→node resolution.** They were
+  built (R0/DEC-006) to satisfy the interface shape and the CLI navigator, which
+  never exercises handles.
+
+So the server cannot even be *constructed* over the current backends, let alone
+serve PUTFH/LOOKUP/READ. Handle allocation is therefore the gating decision for
+R3, not an R5 refinement.
+
+**The fork (to decide at R3 with the code in hand):**
+- **Option A — lift bb-rex's handle allocator.** `nfs_handle_allocator.go` (~22 KB)
+  + `handle_allocator.go` sit in `references/` (part of the `virtual` surface
+  dropped at the carve). They implement stable handle assignment + resolution
+  integrated with the FSAL — the "lift, don't write" path, consistent with the
+  rest of R2. Cost: measure their de-couple surface first (they were dropped for a
+  reason; expect a `go list`/symbol pass like R2b).
+- **Option B — backends self-assign.** Have each backend mint a handle (e.g.
+  derived from a stable inode number) via `SetFileHandle`, with a small
+  Galatea-written resolver. Simpler for osfs/in-memory; less general; duplicates
+  per backend.
+
+**Why not decided now.** This is a genuine design fork that wants its own loop
+(scope → measure Option A's surface → decide → implement), and it arrived at the
+end of a long autonomous run that had just completed R2. Per DEVELOPMENT-LOOP's
+"stop clean," the run checkpoints at R2-complete (green, committed) with this fork
+named, rather than rushing a handle-allocator lift + backend rework + serving +
+RPC smoke test into one over-long push.
+
+**A note for whoever takes R3.** A *minimal* NULL + PUTROOTFH+GETATTR smoke needs
+only (a) the root backend to provide a `FileHandle`, and (b) a stub resolver (that
+COMPOUND never calls it). Browsing (LOOKUP/READDIR/READ) at R4 needs the full
+story. So Option A vs B can be deferred slightly behind a minimal FileHandle +
+stub if you want the serving loop proven first — but decide it before R4.
+
+**What would change this.** Measuring Option A's de-couple surface: if the handle
+allocator lifts as cleanly as the server did, A is clearly right (generality for
+free). If it drags the dropped CAS/allocator surface back in, B wins for Galatea's
+backends.
