@@ -6,11 +6,12 @@ loop updates. If this file and the code disagree, the code is truth — fix this
 
 ---
 
-**Updated:** 2026-05-29 (autonomous run: **R0→R4 read-only + R6a write path DONE —
-Galatea mounts live on macOS, headless, no root, and serves a read-WRITE tree**
-(write + append + truncate all land correctly over NFS). The
-central thesis is proven. Cursor: R6b (dir mutation + truncate) / R5 (conformance)
-/ R1 (timeout). The Finder GUI screenshot is the only Architect-gated bit.)
+**Updated:** 2026-05-29 (autonomous run: **R0→R4 + R6a + most of R6b DONE — Galatea
+is a working read-WRITE NFS filesystem on macOS**, live, headless, no root:
+read/write/append/truncate + create/mkdir/rm/rmdir all verified over a real
+mount. The central thesis is proven and exceeded. Cursor: finish R6b (RENAME +
+`pjdfstest` write subset) / R5 (conformance) / R1 (timeout). The Finder GUI
+screenshot is the only Architect-gated bit.)
 **Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
 filesystem of our own).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
@@ -91,13 +92,14 @@ Milestone A:
   `pynfs` NFSv4.0 read subset against a live `galatea serve` mount; enumerate
   exclusions; stand up `make test-conformance`. Runnable headless now (mounting
   works; `pjdfstest` is a C suite executed at the mountpoint).
-- **R6 — the write path.** *R6a done* (in-memory file contents are writable —
-  write/append/truncate proven live). **R6b remaining:** (1) **directory
-  mutation** — CREATE/MKDIR/REMOVE/RENAME (the in-memory dir still returns
-  `StatusErrROFS`; needs tree-level locking, since creating/removing mutates the
-  children map while reads traverse it — the concurrency design R6a deliberately
-  deferred); (2) the `pjdfstest` write subset. `osfs` write (mutating the real disk) is a separate,
-  later call.
+- **R6 — the write path.** *R6a done* (file contents: write/append/truncate, live).
+  *R6b mostly done* (directory mutation: CREATE/MKDIR/REMOVE/RMDIR live via
+  `NewWritableMemoryDirectory` + a per-dir lock + shared inode counter, and the
+  live-walk `HandleResolver` that resolves created nodes). **Still open:**
+  (1) **RENAME** (`mv`) — the two-directory lock (order by inode); Mknod/Link/
+  Symlink too if wanted; (2) the **`pjdfstest` write subset** + `make
+  test-conformance`. `osfs` write (mutating the real disk) is a separate, later
+  call — the in-memory FSAL is the read-write proving ground.
 - **R1 — the substrate bet (now runnable).** Measure that a multi-minute slow read
   over the mount does *not* hit the RPC-timeout class that stalled NFSv3: put a
   deliberately-slow backend behind `galatea serve` and time a large read.
