@@ -88,9 +88,12 @@ Milestone A:
 - **R1 — the substrate bet (now runnable).** Measure that a multi-minute slow read
   over the mount does *not* hit the RPC-timeout class that stalled NFSv3: put a
   deliberately-slow backend behind `galatea serve` and time a large read.
-- **`osfs` handles.** `serve` exposes an in-memory demo tree because only the
-  in-memory FSAL implements DEC-017 Option B. Give `osfs` inode-based handles + a
-  resolver to mount a *real host directory* — small, and unlocks dogfooding.
+- ✅ **`osfs` handles — done.** `osfs` now provides path-relative file handles +
+  `NewHandleResolver` + the mandatory attributes (M-006 contract), tested. `galatea
+  serve <host-dir> [addr]` mounts a **real host directory** — verified live: served
+  the repo's `docs/` over NFSv4, `ls` listed all 7 files and `head GOAL.md` read it
+  over the mount, clean `umount`. (Caveat: path handles are bounded by NFS4_FHSIZE
+  ≈128 B; deeply-nested paths would need an inode/hash scheme — future.)
 
 Pick R5 or R6 next (R5 hardens what works; R6 extends toward read-write, the
 Milestone-A goal). The **one genuinely-deferred item** is a human-eyes Finder GUI
