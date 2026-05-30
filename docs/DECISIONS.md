@@ -736,3 +736,27 @@ stub if you want the serving loop proven first — but decide it before R4.
 allocator lifts as cleanly as the server did, A is clearly right (generality for
 free). If it drags the dropped CAS/allocator surface back in, B wins for Galatea's
 backends.
+
+**Measurement (this run) — Option A is clean; leaning A.** `nfs_handle_allocator.go`
+(660 lines) + `handle_allocator.go` (129 lines) import **only** `bb-storage/pkg/`
+`{filesystem/path,random}` — both already vendored. No CAS, no dropped surface. So
+Option A lifts with import-rewrites alone, exactly like the server (R2d). And the
+lifted server references only `virtual.HandleResolver` (not the allocator types
+directly), so the allocator is host-side plumbing: it wraps the backend root to
+mint stable `FileHandle`s and yields the `HandleResolver` the pool needs.
+
+Two integration snags to handle when executing A (next session):
+1. **`HandleResolver` is now defined twice.** R2d added `pkg/virtual/handle.go`
+   with `type HandleResolver func(io.ByteReader)(DirectoryChild, Status)`;
+   `handle_allocator.go` defines the same. Lifting the latter means deleting
+   `handle.go` (use the upstream definition) — trivial, but don't miss it.
+2. **Backend wiring.** The allocator wraps `virtual.Directory`/`Leaf` and
+   intercepts `VirtualGetAttributes` to inject the handle. The serve path must
+   wrap the chosen backend (in-memory / osfs) in the allocator before handing the
+   root to `NewNFS40Program`. That's the bridge that gives R0's handle-less
+   backends their `FileHandle` without per-backend work — which also resolves the
+   "backends don't set FileHandle" gap in favour of A over B.
+
+So the lean is **Option A**, executed as its own increment (lift the two files,
+de-dup `HandleResolver`, wrap the backend, then serve). Not done this run — it is
+the R3 opener, teed up.
