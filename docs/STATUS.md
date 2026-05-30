@@ -6,10 +6,10 @@ loop updates. If this file and the code disagree, the code is truth — fix this
 
 ---
 
-**Updated:** 2026-05-29 (autonomous run: R1 gated; **R2 complete + its behavioural
-gate met** — the lifted server *executes* a COMPOUND{PUTROOTFH,GETATTR} →
-NFS4_OK over the in-memory FSAL, in-process; cursor at R3 — serve over the wire +
-a real handle resolver)
+**Updated:** 2026-05-29 (autonomous run: **R0→R4 read-only DONE — Galatea mounts
+live on macOS, headless, no root, and serves a browsable/readable tree.** The
+project's central thesis is proven. Cursor at R5/R6 — conformance + the write
+path. R1 (timeout) and the Finder GUI screenshot are the only deferred bits.)
 **Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
 filesystem of our own).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
@@ -54,104 +54,54 @@ pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
   there via DEC-017 Option B step 1 (in-memory `FileHandle`) + adding
   `IsInNamedAttributeDirectory` to the FSAL (the server's FATTR4 type-encoding
   reads it; surfaced as a panic, fixed). This is the DEC-011/016 smoke gate.
+- **R3 — serve NFSv4 over the wire.** `cmd/galatea serve` listens on loopback TCP,
+  wraps the program with `nfsv4.NewNfs4ProgramService` + `rpcserver.NewServer` +
+  the localhost AUTH_SYS authenticator. NULL + COMPOUND proven over a real TCP
+  dial (`internal/nfsv4/wire_test.go: TestServeOverTCP`) and a `net.Pipe`. The
+  real `HandleResolver` (DEC-017 Option B) landed too — `virtual.NewMemoryHandleResolver`,
+  GETFH/PUTFH handle round-trip tested.
+- **R4 (read-only) — LIVE MOUNT, headless, no root.** The macOS kernel NFS client
+  `mount_nfs`'d `galatea serve` as uid 501; `ls`/`cat` browsed and read the demo
+  tree (README.txt, docs/note.txt) correctly; clean `umount`. Full read path
+  (handshake → PUTROOTFH/GETATTR/ACCESS/LOOKUP/GETFH/PUTFH/OPEN/READ). The
+  "mounting needs root" assumption is falsified with a live receipt. **The central
+  thesis is proven.** DEC-018; M-006 (the one attribute that crashed the first
+  attempt, now guarded by `TestMemoryMandatoryAttributes`).
 
 ## Cursor — next increment
 
-**R3 — serve NFSv4 over the wire (the in-process COMPOUND already works).**
-([`ROADMAP.md`](ROADMAP.md) R3)
+**R5 / R6 — conformance and the write path** (Milestone A's remaining gates).
+([`ROADMAP.md`](ROADMAP.md))
 
-> **Done when:** a NULL call + a basic COMPOUND (PUTROOTFH+GETATTR) complete
-> against the running server over a **loopback socket** (through
-> `rpcserver.HandleConnection` with ONC-RPC record marking) — `pynfs` or a minimal
-> in-tree client.
->
-> **Already done (in-process):** the re-scoped R2 behavioural gate — the program
-> executes the same COMPOUND directly (`internal/nfsv4/program_test.go`). What
-> remains for R3 proper is the *RPC framing* layer around it.
+R0→R4 read-only is done and live (see Done above + DEC-018): Galatea mounts on
+macOS, headless, no root, and serves a browsable/readable tree. What remains for
+Milestone A:
 
-**Two remaining pieces for R3:**
-1. **Serve over the wire.** Wrap the program with `nfsv4.NewNfs4ProgramService`,
-   `rpcserver.NewServer({100003: service}, NewSystemAuthenticator())`, and drive
-   `HandleConnection(r, w)` over an in-process `net.Pipe` (smoke) or a loopback
-   TCP listener (`cmd/galatea serve`). The smoke client must build a record-marked
-   ONC-RPC CALL (xid, prog 100003, vers 4, proc 1, AUTH_SYS cred) wrapping the
-   `Compound4args` — the one laborious bit; crib framing from `rpcserver`'s reader.
-2. **A real `HandleResolver`** (DEC-017 Option B): the in-memory FSAL keeps a
-   `map[handle]Node` (register nodes as they're created/walked) so PUTFH/LOOKUP/
-   READ resolve. The current `NewReadOnlyProgram` stub rejects all handles —
-   fine for PUTROOTFH+GETATTR, *not* for browsing. Needed before R4 (a real mount
-   does LOOKUP/READDIR/READ).
+- **R5 — read-only conformance.** Run the read-applicable `pjdfstest` subset and a
+  `pynfs` NFSv4.0 read subset against a live `galatea serve` mount; enumerate
+  exclusions; stand up `make test-conformance`. Runnable headless now (mounting
+  works; `pjdfstest` is a C suite executed at the mountpoint).
+- **R6 — the write path.** The in-memory FSAL and `osfs` return `StatusErrROFS`
+  for every mutation today. Make a backend read-write and wire NFSv4
+  OPEN-for-write / SETATTR / WRITE / CREATE / MKDIR / REMOVE / RENAME through it;
+  pass the `pjdfstest` write subset.
+- **R1 — the substrate bet (now runnable).** Measure that a multi-minute slow read
+  over the mount does *not* hit the RPC-timeout class that stalled NFSv3: put a
+  deliberately-slow backend behind `galatea serve` and time a large read.
+- **`osfs` handles.** `serve` exposes an in-memory demo tree because only the
+  in-memory FSAL implements DEC-017 Option B. Give `osfs` inode-based handles + a
+  resolver to mount a *real host directory* — small, and unlocks dogfooding.
 
-Everything the server needs to run now exists in-tree and green: the COMPOUND
-engine (`internal/nfsv4`), the wire codec + ONC-RPC record-marking loop
-(`internal/xdr/pkg/{runtime,protocols,rpcserver}`), the localhost AUTH_SYS
-authenticator, and two backends to serve (`pkg/virtual` in-memory, `pkg/osfs`).
+Pick R5 or R6 next (R5 hardens what works; R6 extends toward read-write, the
+Milestone-A goal). The **one genuinely-deferred item** is a human-eyes Finder GUI
+screenshot (the Architect's non-headless Mac); it gates nothing — `ls`/`mount`/`df`
+verify the mount programmatically — but it's the satisfying visual confirmation.
 
-**Serving API — mapped (R3 investigation, this run):** wiring is small —
-`service := nfsv4.NewNfs4ProgramService(program)` yields exactly a
-`rpcserver.Service`; `rpcserver.NewServer(map[uint32]Service{nfsv4.NFS4_PROGRAM_`
-`PROGRAM_NUMBER (100003): service}, authenticator)`; then `server.HandleConnection`
-`(r, w)` per connection. The smoke test can drive `HandleConnection` over an
-in-memory pipe — no TCP or pynfs needed for NULL + PUTROOTFH+GETATTR.
+> **⚠ Do NOT vendor `util` wholesale** — jsonnet/protobuf/grpc/prometheus/uuid;
+> vendor by symbol. (Retained; applies to any future bb-storage grab, e.g. R6.)
 
-**⚠ R3 PREREQUISITE — handle allocation (DEC-017, RESOLVED → Option B).**
-`NewNFS40Program` reads the root's `FileHandle` at construction (panics if unset),
-and `NewOpenedFilesPool` needs a `virtual.HandleResolver` (handle → node). The R0
-backends provide neither. **This run attempted Option A (lift bb-rex's handle
-allocator) and rejected it** — it drags `LinkableLeaf`→`InitialNode`→the
-`PrepopulatedDirectory` node framework the hand-cut `pkg/virtual` deliberately
-omitted (imports looked clean; the symbol cascade wasn't — the R2d lesson again).
-**Chosen: Option B — backends self-assign handles** + a small Galatea-written
-resolver. Keeps the lightweight node model. See DEC-017.
-
-So the R3 opener is now concrete:
-1. ✅ **In-memory FSAL `FileHandle`** — done. `memory.go` self-assigns an 8-byte
-   big-endian handle from each node's inode under `AttributesMaskFileHandle`
-   (`memoryFileHandle`); tested in `handle_test.go`. This unblocks
-   `NewNFS40Program` (which panicked reading the root handle). A map-backed
-   `HandleResolver` (handle → node) is still TODO — needed for LOOKUP/PUTFH browse
-   (R4); the NULL+PUTROOTFH+GETATTR smoke can use a stub resolver (never called).
-2. **A program convenience constructor** in `internal/nfsv4` (fill `NewNFS40Program`'s
-   args: `NewOpenedFilesPool(stubResolver)`, `random.NewFastSingleThreadedGenerator()`,
-   `clock.SystemClock`, zero verifier/prefix, lease times, `path.UNIXFormat`).
-3. **Smoke**: call `program.NfsV4Nfsproc4Null` then `NfsV4Nfsproc4Compound` with a
-   hand-built `Compound4args{PUTROOTFH, GETATTR}` **directly** (no rpcserver /
-   record-marking needed — that's the cheap path); assert `NFS4_OK`. Then, for the
-   full R3 gate, the same over `rpcserver.HandleConnection` via an in-process pipe.
-
-Remaining work for R3 (after the handle decision):
-- Resolve DEC-017; give the backend(s) FileHandle + a resolver.
-- Add `cmd/galatea serve` / a `pkg`-level `Serve`: build the program over a
-  backend, register prog 100003, listen on loopback.
-- Drive it: NULL, then PUTROOTFH+GETATTR (in-memory FSAL, in-process pipe).
-- Expect macOS-client-quirk discovery to begin (R5 leaking early); journal it.
-
-> **⚠ Do NOT vendor `util` wholesale** — jsonnet/protobuf/grpc/prometheus/uuid.
-> (Retained from R2; applies to any future bb-storage symbol grab.)
-
-**After R3:** R4 — `open nfs://localhost:PORT/` to mount read-first. The first
-privileged/GUI-adjacent step: M-004 shows the mount path is open without root, but
-confirming Finder visibility needs the Architect's eyes on a non-headless Mac —
-**the likely first genuinely-blocking wall for a headless agent.**
-
-The server's `virtual.*` surface is entirely interface/attributes/status/
-permissions — **all in `pkg/virtual`**, no handle-allocator/CAS types (a big R2d
-de-risk, measured in `coupling-map.md`). The caution that governed R2a/R2b still
-governs R2d's `clock`/`random` shims:
-
-> **⚠ Do NOT vendor `util` wholesale** — it pulls jsonnet, protobuf, grpc,
-> prometheus, uuid. The "8-package floor" (coupling-map) is *symbol*-light but
-> *transitive-dependency*-heavy: vendor only the symbols actually used (here,
-> nothing from util survives the error-wrapper strip). Same caution for any floor
-> package taken whole.
-
-**After R2:** R3 — wire `cmd/galatea serve` (rpcserver loop, NFS prog 100003) + a
-smoke COMPOUND test; then R4 — `open nfs://localhost:PORT/` to mount read-first.
-
-Loop step to resume at: **4 (Implement)** for R3 — (1) serve over the wire
-(`rpcserver` + `HandleConnection`, record-marked client), (2) a real
-`HandleResolver` for the in-memory FSAL. The in-process COMPOUND already passes
-(R2 behavioural gate met). (R2 complete — DEC-016; server executes — this run.)
+Loop step to resume at: **2 (Scope)** for R5 or R6 — choose the gate, restate its
+"Done when", then investigate. R0→R4 read-only is banked and green.
 
 > **Tooling gotchas this run:** (1) `cd` in Bash *persists* the working dir across
 > calls and breaks later relative-path commands — use absolute paths / `git -C`.

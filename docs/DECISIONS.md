@@ -771,3 +771,59 @@ NTFS) needs richer handle semantics than a self-assigned opaque — e.g. handles
 stable across remounts — revisit; bb-rex's allocator could then be adapted to
 Galatea's node model rather than lifted whole. For Milestone A's in-memory/osfs
 backends, B is sufficient and far lighter.
+
+---
+
+## DEC-018 — R4 (read-only) reached live, headless; "mounting needs root" is fully falsified
+
+**Date:** 2026-05-29 · **Status:** accepted (observed end to end) · **Supersedes
+the framing of:** DEC-009 (R4 as the privileged/GUI wall) and ROADMAP's R4.
+
+**What was observed.** With `galatea serve` (the lifted bb-rex NFSv4 server over a
+loopback TCP socket) running as uid 501, the macOS *kernel* NFS client mounted it
+and served a browsable, readable filesystem — all headless, no root, no sudo:
+
+```
+mount_nfs -o vers=4.0,port=12050,mountport=12050,tcp localhost:/ mnt   # exit 0
+ls -la mnt          -> README.txt (r--r--r--), docs/ (dr-xr-xr-x)
+cat mnt/README.txt  -> "Hello from Galatea — an in-house userspace NFSv4 server."
+cat mnt/docs/note.txt -> "A second file, one directory deep."
+umount mnt          -> clean
+```
+
+The full read path executed against the lifted server: SETCLIENTID/handshake,
+PUTROOTFH, GETATTR (broad attribute set), ACCESS, LOOKUP, GETFH, PUTFH (handle
+round-trip via DEC-017's resolver), OPEN, READ, CLOSE. The single fix to get from
+"connects + panics" to "mounts + reads" was one mandatory FSAL attribute (M-006).
+
+**Why this matters / what it settles.**
+- **"R4 needs root" is dead, with a live receipt.** DEC-009 hedged it; M-004
+  argued it from `mount_nfs` error codes; this *did the mount*. `mount_nfs` as a
+  normal user mounted our userspace server. The privilege wall the project feared
+  for months does not exist on this Mac for this path.
+- **The project's central thesis is proven.** Galatea exists to let macOS mount an
+  in-house, FOSS, kext-free NFSv4 server. That now happens. R0→R4 (read-only) —
+  lift, de-couple, serve, mount, browse, read — is real, not projected.
+- **The only un-headless step is the literal Finder GUI screenshot.** DEC-009
+  already noted `ls`/`mount`/`df` verify visibility programmatically; they do. A
+  human-eyes Finder confirmation remains nice-to-have for the Architect, but it
+  gates nothing.
+
+**Remaining for Milestone A (all now reachable in this environment):**
+- **R5** — read-only conformance: run the read-applicable `pjdfstest` subset and a
+  `pynfs` read subset against the mount. (Mounting works, so this is runnable.)
+- **R6** — the write path: make a backend read-write (the in-memory FSAL returns
+  `StatusErrROFS` everywhere today) + NFSv4 OPEN-for-write/SETATTR/WRITE wiring.
+- **R1** — the timeout measurement (a multi-minute slow read that stalled NFSv3):
+  now runnable, since we can mount our own server and shape a slow backend.
+- **R7/R8** — endurance, lifecycle, the AC1–AC7 checklist.
+
+**What would change this.** Nothing reverses the observation. A *different* macOS
+version, or the eventual real backend (osfs/MTP/NTFS) with its own quirks, may
+surface new client demands (the M-006 pattern) — handled the same way: let the
+real client tell you, guard with a test.
+
+**`osfs` handles, noted.** `serve` exposes an in-memory demo tree because only the
+in-memory FSAL implements DEC-017 Option B (handles + resolver) so far. Giving
+`osfs` inode-based handles + a resolver is the small step to mounting a *real host
+directory* — a natural R5/R6-adjacent task.

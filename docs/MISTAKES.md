@@ -139,3 +139,37 @@ someone else's code may be a real latent bug, not noise to silence.
 has no concurrent-SEQUENCE test yet, and the 4.1 path isn't on the read-first
 critical path to a mount. Flagged for a regression test when 4.1 SEQUENCE
 concurrency is actually wired (R3+).
+
+---
+
+## M-006 — Unit tests requested a narrow attribute set; the real macOS client crashed the live mount
+
+**Date:** 2026-05-29 · **Cost:** one server panic on the first live mount (caught
+the moment R4 was attempted, before any claim of "it mounts") · **Lesson:** test
+against the real client's demands, not a convenient subset.
+
+**What happened.** The in-process and over-the-wire COMPOUND smoke tests
+(`program_test.go`, `wire_test.go`) requested a GETATTR for a *narrow* attribute
+set — just `FATTR4_TYPE`. They passed. The first real `mount_nfs` from the macOS
+kernel client immediately **panicked** the server: the client's GETATTR requests
+a broad attribute set, and the in-memory FSAL had not set
+`AttributesMaskHasNamedAttributes` (a *mandatory* attribute — `GetHasNamedAttributes`
+panics if unset, like ~6 others). The narrow test never exercised it.
+
+**The shape of the bug.** Three times now the same pattern: the FSAL omits an
+attribute the server's FATTR4 encoder treats as mandatory (`FileHandle`, then
+`IsInNamedAttributeDirectory`, then `HasNamedAttributes`). Each surfaced as a
+panic, not a typed error — bb-rex's `Attributes.GetX()` panics on "mandatory but
+unset" by design (it's a server-author contract, not a client-facing path).
+
+**Cheaper path / fix.** (1) Don't let a synthetic narrow test stand in for the
+real client — the moment a mount was attempted, the gap appeared. (2) The durable
+guard: `TestMemoryMandatoryAttributes` now asserts the in-memory FSAL sets *every*
+mandatory attribute, so the next omission fails `go test` rather than a live
+mount. A real backend (osfs, MTP, NTFS) must satisfy the same contract; that test
+is the checklist.
+
+**The good news inside the bug.** Hitting this *at all* meant the macOS kernel
+client had connected to our userspace server, authenticated (AUTH_SYS), and driven
+a real COMPOUND — i.e. mounting works unprivileged here. Fixing the one attribute
+turned the crash into a clean, browsable, readable mount (see DEC-018).

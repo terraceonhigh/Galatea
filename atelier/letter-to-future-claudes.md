@@ -49,20 +49,32 @@ path, `/Users/terrace/Labs/Galatea/references/...`).
   grep buildbarn` now returns **nothing**. The type fork (DEC-005) was resolved
   toward vendoring (DEC-011); see DEC-014/015/016 and the `VENDOR.md` files under
   `internal/`.
-- Every decision is journaled in `docs/DECISIONS.md` (now through DEC-017). Read
+- Every decision is journaled in `docs/DECISIONS.md` (now through DEC-018). Read
   the relevant ones before second-guessing — the reasoning and "what would change
   this" are there.
+- **R3 and R4-read-only landed in the same run — Galatea mounts on macOS, live.**
+  `cmd/galatea serve` serves the lifted server over loopback TCP; the macOS kernel
+  NFS client `mount_nfs`'d it as a normal user (no root), and `ls`/`cat` browsed
+  and read a demo tree correctly (DEC-018). Handle allocation was resolved to
+  Option B (backends self-assign; `virtual.NewMemoryHandleResolver`) after Option A
+  proved to drag bb-rex's node framework (DEC-017). The "mounting needs root" fear
+  is falsified with a live receipt. **The project's whole thesis is proven.**
 
-**The next move (R3): serve, but first decide handle allocation (DEC-017, open).**
-The serving wiring is small and mapped (`nfsv4.NewNfs4ProgramService` →
-`rpcserver.NewServer` → `HandleConnection`; a smoke COMPOUND can run over an
-in-process pipe). But running the server surfaced a real gap: it is built around
-**file handles**, and the R0 backends (in-memory, `osfs`) provide none —
-`NewNFS40Program` would panic reading the root's `FileHandle`. So R3 is gated on a
-handle-allocation decision: lift bb-rex's handle allocator (Option A) or have
-backends self-assign (Option B). STATUS's cursor and DEC-017 lay it out. Decide it
-with the code in front of you; a minimal NULL+GETATTR smoke needs only a root
-FileHandle + a stub resolver.
+**The next move (R5 or R6).** R0→R4 read-only is done. Pick: **R5** (read-only
+conformance — `pjdfstest`/`pynfs` against a live mount, `make test-conformance`) to
+harden what works, or **R6** (the write path — backends are `StatusErrROFS`-only
+today; wire NFSv4 OPEN-for-write/WRITE/CREATE/REMOVE/RENAME) to push toward the
+read-write Milestone-A goal. Also small and useful: give `osfs` inode handles + a
+resolver so `serve` can expose a *real host directory* (today it serves an
+in-memory demo tree — only the in-memory FSAL has handles). STATUS's cursor lays
+out all of it. The one deferred bit is a human-eyes Finder screenshot (the
+Architect's non-headless Mac); it gates nothing.
+
+A recurring lesson worth internalizing (M-006, and twice before): the lifted
+server treats a set of FATTR4 attributes as *mandatory* and **panics** if the FSAL
+omits one. Synthetic tests requested narrow sets and passed; the real macOS client
+requests a broad set and crashed the first live mount. `TestMemoryMandatoryAttributes`
+now guards it — any new backend (osfs, MTP, NTFS) must satisfy the same contract.
 
 **Terms of art.** "FSAL" = filesystem abstraction layer (the `Directory`/`Leaf`
 interface a host plugs into). "The floor" = the irreducible bb-storage dependency
