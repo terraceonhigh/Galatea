@@ -8,10 +8,10 @@ loop updates. If this file and the code disagree, the code is truth — fix this
 
 **Updated:** 2026-05-29 (autonomous run: **R0→R4 + R6a + most of R6b DONE — Galatea
 is a working read-WRITE NFS filesystem on macOS**, live, headless, no root:
-read/write/append/truncate + create/mkdir/rm/rmdir all verified over a real
-mount. The central thesis is proven and exceeded. Cursor: finish R6b (RENAME +
-`pjdfstest` write subset) / R5 (conformance) / R1 (timeout). The Finder GUI
-screenshot is the only Architect-gated bit.)
+read/write/append/truncate + create/mkdir/rm/rmdir/**rename** all verified over a
+real mount (`go test -race` clean). The central thesis is proven and exceeded.
+Cursor: R5 (pjdfstest conformance) / R1 (timeout) / osfs-write; Mknod/Link/Symlink
+are niche follow-ups. The Finder GUI screenshot is the only Architect-gated bit.)
 **Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
 filesystem of our own).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
@@ -92,14 +92,15 @@ Milestone A:
   `pynfs` NFSv4.0 read subset against a live `galatea serve` mount; enumerate
   exclusions; stand up `make test-conformance`. Runnable headless now (mounting
   works; `pjdfstest` is a C suite executed at the mountpoint).
-- **R6 — the write path.** *R6a done* (file contents: write/append/truncate, live).
-  *R6b mostly done* (directory mutation: CREATE/MKDIR/REMOVE/RMDIR live via
-  `NewWritableMemoryDirectory` + a per-dir lock + shared inode counter, and the
-  live-walk `HandleResolver` that resolves created nodes). **Still open:**
-  (1) **RENAME** (`mv`) — the two-directory lock (order by inode); Mknod/Link/
-  Symlink too if wanted; (2) the **`pjdfstest` write subset** + `make
-  test-conformance`. `osfs` write (mutating the real disk) is a separate, later
-  call — the in-memory FSAL is the read-write proving ground.
+- **R6 — the write path: the in-memory FSAL is fully read-write, proven live.**
+  create/write/append/truncate/mkdir/rm/rmdir/**rename** all work over a real
+  macOS NFS mount, via `NewWritableMemoryDirectory` (per-dir lock + shared inode
+  counter; rename takes the two-dir lock ordered by inode) + the live-walk
+  `HandleResolver`. `go test -race ./pkg/virtual` is clean. **Still open for R6:**
+  (1) Mknod/Link/Symlink (still ROFS — niche; a Finder data disk rarely needs
+  them); (2) the **`pjdfstest` write subset** + `make test-conformance` (R5);
+  (3) `osfs` write (mutating the real disk) — a separate, later call; the
+  in-memory FSAL is the read-write proving ground.
 - **R1 — the substrate bet (now runnable).** Measure that a multi-minute slow read
   over the mount does *not* hit the RPC-timeout class that stalled NFSv3: put a
   deliberately-slow backend behind `galatea serve` and time a large read.
