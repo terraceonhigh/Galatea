@@ -519,3 +519,55 @@ dropped.
 **Next:** R2b — vendor `path`+`filesystem` (DEC-011) — is now the immediate work,
 because the lifted server can't compile without them. Then the server files, then
 mount read-first.
+
+---
+
+## DEC-014 — R2b executed: `path`+`filesystem` vendored & stripped; the only new dependency (`x/sys/unix`) reimplemented inline
+
+**Date:** 2026-05-29 · **Status:** accepted (executes DEC-011's vendor arm)
+
+**Decision.** DEC-011's vendor step is done. `bb-storage/pkg/{filesystem,
+filesystem/path}` are copied into `internal/bb/filesystem/{,path}` (copy +
+import-rewrite, the DEC-010 mechanism), the gRPC-status error idiom stripped to
+stdlib, and the packages build/vet/test/fmt green standalone. Full provenance and
+the strip recipe are in `internal/bb/VENDOR.md`. Two judgment calls beyond the
+mechanical recipe, recorded here because a future session would otherwise have to
+reverse-engineer them:
+
+1. **`x/sys/unix` reimplemented inline (the one real decision).** `path` stripped
+   to pure stdlib exactly as the STATUS recipe predicted (its only external
+   coupling was `util`/`grpc-status`, all in error returns). But `filesystem`
+   carried a coupling the recipe had *not* flagged: `device_number_unix.go`
+   imported `golang.org/x/sys/unix` for dev_t packing (`Mkdev`/`Major`/`Minor`) —
+   which would have been Galatea's only non-stdlib runtime dependency, breaking
+   AC7 purity. Resolved by inlining the macOS/BSD dev_t encoding in a single
+   unconstrained `device_number.go` (Galatea is macOS-only), dropping the
+   platform-split `device_number_{unix,nonunix}.go`. The raw encoding is
+   immaterial in practice (NFSv4 sends device numbers as a major/minor `specdata4`
+   pair, never the raw dev_t; Galatea's backends serve no device nodes), but the
+   encoding is macOS-correct. *This is the kind of "measured floor missed one
+   transitive import" surprise the loop's verify step exists to catch — `go build`
+   flagged it immediately.*
+
+2. **`filesystem/directory.go` kept whole, not trimmed.** It carries bb-storage's
+   full local-disk `Directory` interface (`Mount`/`Clonefile`/`OpenAppend`/…),
+   which Galatea does not use — but it is also where `DeterministicFileModification`
+   `Timestamp` lives, it compiles standalone (interface defs need no impls), and it
+   pulls nothing heavy. Trimming it to just the constant is deferrable cleanup, not
+   worth the risk of removing a type the server turns out to reference; revisit if
+   the dead surface ever bothers us. Same for `file.go`'s unused `File*` interfaces.
+
+**Verification.** `go build/vet/test ./...` green, `go fmt ./...` clean. New smoke
+test `internal/bb/filesystem/path/smoke_test.go` resolves a happy path and asserts
+the two stripped error paths (null byte; absolute-via-relative-walker) still return
+non-nil — guarding the one thing the lift actually changed.
+
+**Not yet wired.** R2b only makes the vendored packages *exist and compile*.
+Nothing imports them yet — that is R2c (re-point `pkg/virtual`'s leaf types to
+them and fix `pkg/osfs` / the in-memory FSAL / `cmd/galatea`), the next increment.
+
+**What would change this.** If R2c reveals `pkg/virtual` needs a `filesystem` or
+`path` symbol that was in a dropped file (none expected — the needed set is
+`FileType*`, `DeviceNumber`, `RegionType`, `FileInfo`, `Component`, `Parser`, all
+present), re-copy that file. If the dead `Directory`/`File*` interface surface
+proves a maintenance burden, trim per call #2 above.

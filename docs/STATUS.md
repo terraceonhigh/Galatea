@@ -6,8 +6,8 @@ loop updates. If this file and the code disagree, the code is truth — fix this
 
 ---
 
-**Updated:** 2026-05-29 (autonomous run: R1 gated; R2a + serving-foundation done;
-(A) confirmed reachable; R2b carve mapped)
+**Updated:** 2026-05-29 (autonomous run: R1 gated; R2a + serving-foundation +
+**R2b** done; (A) confirmed reachable; cursor at R2c)
 **Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
 filesystem of our own).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
@@ -26,19 +26,27 @@ pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
   vendored; `golang.org/x/sync/errgroup` replaced by self-contained
   `internal/errgroup`. Mount feasibility proven (M-004): NetFS/automountd path is
   present, so **(A) is reachable here** — no root needed.
+- **R2b — `path`+`filesystem` vendored.** `internal/bb/filesystem/{,path}` —
+  copied, grpc-status error idiom stripped to stdlib, `x/sys/unix` dev_t packing
+  reimplemented inline (kept the module dependency-free). Builds/vets/tests/fmt
+  green standalone; path smoke test guards the strip. DEC-014, `internal/bb/VENDOR.md`.
+  *Not yet wired into anything — that's R2c.*
 
 ## Cursor — next increment
 
-**R2b → R2 — Lift the NFSv4 server (DEC-007).** ([`ROADMAP.md`](ROADMAP.md))
+**R2c — re-point `pkg/virtual`'s leaf types to the vendored `path`/`filesystem`
+(execute DEC-011's wiring).** ([`ROADMAP.md`](ROADMAP.md) R2)
 
-> **Done when:** the lifted server package compiles and bb-rex's in-tree server
-> tests pass against the in-memory FSAL; `go list` shows no bb-storage import
-> outside the vendored floor.
+> **Done when:** `pkg/virtual` uses `internal/bb/filesystem{,/path}` for its leaf
+> types (`Component`/`Parser`; `FileType`/`DeviceNumber`/`RegionType`/`FileInfo`),
+> the hand-cut natives in `types.go` are retired, and `pkg/osfs` + the in-memory
+> FSAL + `cmd/galatea` are re-typed accordingly — with `go build/vet/test/fmt
+> ./...` green (the existing R0 suite re-verifies the swap).
 
-**The type fork is decided (DEC-011):** vendor `path`+`filesystem`, re-point
-`pkg/virtual`'s leaf types to them, retire the hand-cut natives. The server then
-lifts with import-rewrites only. The R2 gate is re-scoped to "compiles + a
-Galatea smoke COMPOUND test" (bb-rex's gomock tests are a separate mountain).
+R2b (vendor `path`+`filesystem`) is **done** — DEC-014. The vendored packages
+exist, compile, and are dependency-free; R2c wires them in. Then R2d lifts the
+server, which — with `pkg/virtual` and the server both on the vendored leaf
+types — resolves by import-rewrite with zero boundary type-conversion.
 
 Investigation done — the map for the next session:
 
@@ -47,10 +55,8 @@ Investigation done — the map for the next session:
   types. The server does *not* need the CAS machinery lifted. ✅ big de-risk.
 - **Server external deps to handle:**
   - `go-xdr` — vendored (R2a). ✅
-  - `path` — **20 files**, imports `grpc/codes`+`grpc/status` (error returns) and
-    bb-storage `util`. Vendor + either accept grpc or strip grpc-status.
-  - `filesystem` — `FileType*` consts + `DeterministicFileModificationTimestamp`
-    (+ `util`, `windowsext` tail). Vendor.
+  - `path` — vendored & stripped to stdlib ✅ (R2b, DEC-014).
+  - `filesystem` — vendored ✅ (R2b); leaf types only, `x/sys/unix` inlined.
   - `clock` (Clock iface + Now), `random` (SingleThreadedGenerator) — tiny shims.
   - `prometheus` (nfs40 metrics) — strip to no-ops.
   - `auth`/`jmespath`/`eviction` — **don't vendor**; replace `system_authenticator.go`
@@ -62,24 +68,9 @@ Done this run toward R2: **rpcserver + a self-contained errgroup vendored**
 server (hand-writing correct FATTR4/READDIR/state-handshake is slower than lifting
 the complete impl). So the path forward is R2 proper, sequenced read-first.
 
-**R2b recipe (precise — investigated this run; vendor by copy+strip):**
-- `path`: vendor the package into `internal/bb/filesystem/path`. **Drop**
-  `local_format_windows.go` (`//go:build windows`). On darwin, 9 files compile and
-  use grpc/util: `absolute_scope_walker, builder, component,
-  loop_detecting_scope_walker, unix_format, relative_scope_walker,
-  virtual_root_scope_walker_factory, trace, windows_format`. path's ONLY external
-  symbols are `util.StatusWrap`/`util.StatusWrapf` and `status.Error`+`codes.*` —
-  all error wrappers. Strip: `status.Error(codes.X,"m")` → `errors.New("m")`;
-  `util.StatusWrap(err,"m")` → `fmt.Errorf("m: %w", err)`;
-  `util.StatusWrapf(err,"f",a...)` → `fmt.Errorf("f: %w", a..., err)`; fix imports
-  (drop grpc+util, add errors/fmt). Optional shrink: the server uses only
-  `{Component,Parser,Format,NewComponent,UNIXFormat,EmptyBuilder,VoidScopeWalker,
-  Resolve}` — the absolute/relative/loop_detecting/virtual_root scope-walker
-  variants may be deletable if nothing kept references them (verify, Go compiles
-  whole-package).
-- `filesystem`: survey the same way (needs `FileType*`,
-  `DeterministicFileModificationTimestamp`, `DeviceNumber`, `RegionType`,
-  `FileInfo`); expect the same grpc/util error-wrapper tail; strip identically.
+**R2b is done** (DEC-014; full recipe & provenance now in `internal/bb/VENDOR.md`).
+The caution that informed it still governs R2d's remaining shims (`clock`,
+`random` — vendor by symbol, not whole):
 
 > **⚠ Do NOT vendor `util` wholesale** — it pulls jsonnet, protobuf, grpc,
 > prometheus, uuid. The "8-package floor" (coupling-map) is *symbol*-light but
@@ -96,7 +87,8 @@ the complete impl). So the path forward is R2 proper, sequenced read-first.
 - **R3/R4** — wire `cmd/galatea serve` (rpcserver loop, NFS prog 100003), then
   `open nfs://localhost:PORT/` to mount read-first.
 
-Loop step to resume at: **4 (Implement)** for R2b — the carve is fully mapped.
+Loop step to resume at: **4 (Implement)** for R2c — re-point `pkg/virtual`'s leaf
+types to the vendored packages. (R2b done — DEC-014.)
 
 > **Tooling gotchas this run:** (1) `cd` in Bash *persists* the working dir across
 > calls and breaks later relative-path commands — use absolute paths / `git -C`.
