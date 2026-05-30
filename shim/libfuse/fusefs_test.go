@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -83,5 +85,86 @@ func TestFuseFSTranslation(t *testing.T) {
 	}
 	if _, l := dc.GetPair(); l == nil {
 		t.Error("resolved /hello handle is not a leaf")
+	}
+}
+
+// TestFuseFSWritePath is the Phase-2a gate: the mutating fuseFS methods map onto
+// the app's write ops, verified by their *effects* on a host temp dir through a
+// read-write passthrough fixture (no .create — exercises the mknod+open path).
+func TestFuseFSWritePath(t *testing.T) {
+	root := t.TempDir()
+	fsRoot, _ := NewFuseRoot(passthroughOps(root))
+	ctx := context.Background()
+
+	// mkdir → host dir appears.
+	if _, _, st := fsRoot.VirtualMkdir(virtual.MustNewComponent("d"), 0, &virtual.Attributes{}); st != virtual.StatusOK {
+		t.Fatalf("mkdir: %v", st)
+	}
+	if fi, err := os.Stat(filepath.Join(root, "d")); err != nil || !fi.IsDir() {
+		t.Fatalf("mkdir effect: err=%v", err)
+	}
+
+	// create (mknod+open fallback) → returns a writable leaf.
+	createAttrs := &virtual.Attributes{}
+	createAttrs.SetPermissions(virtual.PermissionsRead | virtual.PermissionsWrite)
+	leaf, _, _, st := fsRoot.VirtualOpenChild(ctx, virtual.MustNewComponent("f.txt"),
+		virtual.ShareMaskWrite, createAttrs, &virtual.OpenExistingOptions{}, 0, &virtual.Attributes{})
+	if st != virtual.StatusOK || leaf == nil {
+		t.Fatalf("create f.txt: status=%v leaf=%v", st, leaf)
+	}
+
+	// write → bytes land on the host file, and read back through fuseFS.
+	data := []byte("hello write path")
+	if n, st := leaf.VirtualWrite(data, 0); st != virtual.StatusOK || n != len(data) {
+		t.Fatalf("write: n=%d status=%v", n, st)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "f.txt")); err != nil || string(got) != string(data) {
+		t.Fatalf("write effect on host: %q err=%v", got, err)
+	}
+	buf := make([]byte, 64)
+	if n, _, st := leaf.VirtualRead(buf, 0); st != virtual.StatusOK || string(buf[:n]) != string(data) {
+		t.Fatalf("read back: %q status=%v", buf[:n], st)
+	}
+
+	// SETATTR size=0 → truncate (the exact branch the truncate bug lived in).
+	in := &virtual.Attributes{}
+	in.SetSizeBytes(0)
+	if st := leaf.VirtualSetAttributes(ctx, in, 0, &virtual.Attributes{}); st != virtual.StatusOK {
+		t.Fatalf("setattr truncate: %v", st)
+	}
+	if fi, err := os.Stat(filepath.Join(root, "f.txt")); err != nil || fi.Size() != 0 {
+		t.Fatalf("truncate effect: size=%d err=%v", fi.Size(), err)
+	}
+
+	// SETATTR perms → chmod (read-only: owner write bit clears).
+	in2 := &virtual.Attributes{}
+	in2.SetPermissions(virtual.PermissionsRead)
+	if st := leaf.VirtualSetAttributes(ctx, in2, 0, &virtual.Attributes{}); st != virtual.StatusOK {
+		t.Fatalf("setattr chmod: %v", st)
+	}
+	if fi, err := os.Stat(filepath.Join(root, "f.txt")); err != nil || fi.Mode().Perm()&0o200 != 0 {
+		t.Fatalf("chmod effect: mode=%v err=%v (want owner-write cleared)", fi.Mode().Perm(), err)
+	}
+
+	// rename f.txt → g.txt.
+	if _, _, st := fsRoot.VirtualRename(virtual.MustNewComponent("f.txt"), fsRoot, virtual.MustNewComponent("g.txt")); st != virtual.StatusOK {
+		t.Fatalf("rename: %v", st)
+	}
+	if _, err := os.Stat(filepath.Join(root, "g.txt")); err != nil {
+		t.Fatalf("rename effect: g.txt missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "f.txt")); !os.IsNotExist(err) {
+		t.Fatalf("rename effect: f.txt should be gone, err=%v", err)
+	}
+
+	// remove the file (leaf) and the dir, leaving the root empty.
+	if _, st := fsRoot.VirtualRemove(virtual.MustNewComponent("g.txt"), false, true); st != virtual.StatusOK {
+		t.Fatalf("remove g.txt: %v", st)
+	}
+	if _, st := fsRoot.VirtualRemove(virtual.MustNewComponent("d"), true, false); st != virtual.StatusOK {
+		t.Fatalf("rmdir d: %v", st)
+	}
+	if entries, _ := os.ReadDir(root); len(entries) != 0 {
+		t.Fatalf("after removes, host dir not empty: %v", entries)
 	}
 }

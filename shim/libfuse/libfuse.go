@@ -44,6 +44,45 @@ static int call_read(const struct fuse_operations *op, const char *path, char *b
 	return op->read(path, buf, size, off, fi);
 }
 
+// --- write-path trampolines (Phase 2) ---
+static int has_create(const struct fuse_operations *op) { return op->create != NULL; }
+static int call_write(const struct fuse_operations *op, const char *path, const char *buf, size_t size, off_t off, struct fuse_file_info *fi) {
+	if (!op->write) return -ENOSYS;
+	return op->write(path, buf, size, off, fi);
+}
+static int call_create(const struct fuse_operations *op, const char *path, unsigned int mode, struct fuse_file_info *fi) {
+	if (!op->create) return -ENOSYS;
+	return op->create(path, (mode_t)mode, fi);
+}
+static int call_mknod(const struct fuse_operations *op, const char *path, unsigned int mode, unsigned long rdev) {
+	if (!op->mknod) return -ENOSYS;
+	return op->mknod(path, (mode_t)mode, (dev_t)rdev);
+}
+static int call_mkdir(const struct fuse_operations *op, const char *path, unsigned int mode) {
+	if (!op->mkdir) return -ENOSYS;
+	return op->mkdir(path, (mode_t)mode);
+}
+static int call_unlink(const struct fuse_operations *op, const char *path) {
+	if (!op->unlink) return -ENOSYS;
+	return op->unlink(path);
+}
+static int call_rmdir(const struct fuse_operations *op, const char *path) {
+	if (!op->rmdir) return -ENOSYS;
+	return op->rmdir(path);
+}
+static int call_rename(const struct fuse_operations *op, const char *from, const char *to) {
+	if (!op->rename) return -ENOSYS;
+	return op->rename(from, to);
+}
+static int call_truncate(const struct fuse_operations *op, const char *path, off_t size) {
+	if (!op->truncate) return -ENOSYS;
+	return op->truncate(path, size);
+}
+static int call_chmod(const struct fuse_operations *op, const char *path, unsigned int mode) {
+	if (!op->chmod) return -ENOSYS;
+	return op->chmod(path, (mode_t)mode);
+}
+
 // call_readdir is defined in bridge.c, which includes _cgo_export.h to reference
 // the exported Go filler goFill with cgo's exact signature.
 int call_readdir(const struct fuse_operations *op, const char *path, uintptr_t buf);
@@ -181,6 +220,33 @@ func (c *fuseConn) nodeFor(p string, st *C.struct_stat) virtual.Node {
 		return &fuseDir{conn: c, path: p}
 	}
 	return &fuseFile{conn: c, path: p}
+}
+
+// errStatus maps a FUSE op's return value (0 on success, -errno on failure) to a
+// virtual.Status. A write/read returns a positive byte count, handled separately.
+func errStatus(r C.int) virtual.Status {
+	switch r {
+	case 0:
+		return virtual.StatusOK
+	case -C.ENOENT:
+		return virtual.StatusErrNoEnt
+	case -C.EEXIST:
+		return virtual.StatusErrExist
+	case -C.ENOTEMPTY:
+		return virtual.StatusErrNotEmpty
+	case -C.EISDIR:
+		return virtual.StatusErrIsDir
+	case -C.ENOTDIR:
+		return virtual.StatusErrNotDir
+	case -C.EACCES:
+		return virtual.StatusErrAccess
+	case -C.EPERM:
+		return virtual.StatusErrPerm
+	case -C.EROFS:
+		return virtual.StatusErrROFS
+	default:
+		return virtual.StatusErrIO
+	}
 }
 
 // childOf wraps a node as a DirectoryChild.
@@ -330,10 +396,37 @@ func (d *fuseDir) VirtualOpenChild(ctx context.Context, name virtual.Component, 
 	childPath := path.Join(d.path, name.String())
 	st, status := d.conn.getattr(childPath)
 	if status == virtual.StatusErrNoEnt {
-		if createAttributes != nil {
-			return nil, 0, ci, virtual.StatusErrROFS
+		if createAttributes == nil {
+			return nil, 0, ci, virtual.StatusErrNoEnt
 		}
-		return nil, 0, ci, virtual.StatusErrNoEnt
+		// Create a new regular file: prefer the app's create() (creates and
+		// opens), else mknod() then open().
+		mode := uint32(0o644)
+		if perms, ok := createAttributes.GetPermissions(); ok {
+			mode = perms.ToMode()
+		}
+		cp := C.CString(childPath)
+		defer C.free(unsafe.Pointer(cp))
+		var fi C.struct_fuse_file_info
+		d.conn.mu.Lock()
+		var r C.int
+		if C.has_create(d.conn.op) != 0 {
+			r = C.call_create(d.conn.op, cp, C.uint(mode), &fi)
+		} else {
+			r = C.call_mknod(d.conn.op, cp, C.uint(mode|uint32(C.S_IFREG)), 0)
+			if r == 0 {
+				r = C.call_open(d.conn.op, cp, &fi)
+			}
+		}
+		d.conn.mu.Unlock()
+		if r < 0 {
+			return nil, 0, ci, errStatus(r)
+		}
+		// Neither create nor mknod returns a stat; getattr to fill the
+		// attributes the client expects back from OPEN.
+		st2, _ := d.conn.getattr(childPath)
+		statToAttrs(&st2, childPath, requested, openedFileAttributes)
+		return &fuseFile{conn: d.conn, path: childPath}, 0, ci, virtual.StatusOK
 	}
 	if status != virtual.StatusOK {
 		return nil, 0, ci, status
@@ -344,11 +437,11 @@ func (d *fuseDir) VirtualOpenChild(ctx context.Context, name virtual.Component, 
 	if uint32(st.st_mode)&uint32(C.S_IFMT) == uint32(C.S_IFDIR) {
 		return nil, 0, ci, virtual.StatusErrIsDir
 	}
-	if shareAccess&virtual.ShareMaskWrite != 0 {
-		return nil, 0, ci, virtual.StatusErrROFS
-	}
+	// Existing file: open it (VirtualOpenSelf honors truncate), return attrs.
 	leaf := &fuseFile{conn: d.conn, path: childPath}
-	statToAttrs(&st, childPath, requested, openedFileAttributes)
+	if s := leaf.VirtualOpenSelf(ctx, shareAccess, existingOptions, requested, openedFileAttributes); s != virtual.StatusOK {
+		return nil, 0, ci, s
+	}
 	return leaf, 0, ci, virtual.StatusOK
 }
 
@@ -364,16 +457,62 @@ func (d *fuseDir) VirtualLink(ctx context.Context, name virtual.Component, leaf 
 	return virtual.ChangeInfo{}, virtual.StatusErrROFS
 }
 func (d *fuseDir) VirtualMkdir(name virtual.Component, requested virtual.AttributesMask, a *virtual.Attributes) (virtual.Directory, virtual.ChangeInfo, virtual.Status) {
-	return nil, virtual.ChangeInfo{}, virtual.StatusErrROFS
+	ci := virtual.ChangeInfo{}
+	childPath := path.Join(d.path, name.String())
+	cp := C.CString(childPath)
+	defer C.free(unsafe.Pointer(cp))
+	d.conn.mu.Lock()
+	r := C.call_mkdir(d.conn.op, cp, C.uint(0o755))
+	d.conn.mu.Unlock()
+	if st := errStatus(r); st != virtual.StatusOK {
+		return nil, ci, st
+	}
+	st2, _ := d.conn.getattr(childPath)
+	statToAttrs(&st2, childPath, requested, a)
+	return &fuseDir{conn: d.conn, path: childPath}, ci, virtual.StatusOK
 }
 func (d *fuseDir) VirtualMknod(ctx context.Context, name virtual.Component, fileType virtual.FileType, requested virtual.AttributesMask, a *virtual.Attributes) (virtual.Leaf, virtual.ChangeInfo, virtual.Status) {
 	return nil, virtual.ChangeInfo{}, virtual.StatusErrROFS
 }
 func (d *fuseDir) VirtualRename(oldName virtual.Component, newDirectory virtual.Directory, newName virtual.Component) (virtual.ChangeInfo, virtual.ChangeInfo, virtual.Status) {
-	return virtual.ChangeInfo{}, virtual.ChangeInfo{}, virtual.StatusErrROFS
+	ci := virtual.ChangeInfo{}
+	nd, ok := newDirectory.(*fuseDir)
+	if !ok || nd.conn != d.conn {
+		return ci, ci, virtual.StatusErrXDev
+	}
+	from := path.Join(d.path, oldName.String())
+	to := path.Join(nd.path, newName.String())
+	cf := C.CString(from)
+	defer C.free(unsafe.Pointer(cf))
+	ct := C.CString(to)
+	defer C.free(unsafe.Pointer(ct))
+	d.conn.mu.Lock()
+	r := C.call_rename(d.conn.op, cf, ct)
+	d.conn.mu.Unlock()
+	return ci, ci, errStatus(r)
 }
 func (d *fuseDir) VirtualRemove(name virtual.Component, removeDirectory, removeLeaf bool) (virtual.ChangeInfo, virtual.Status) {
-	return virtual.ChangeInfo{}, virtual.StatusErrROFS
+	ci := virtual.ChangeInfo{}
+	childPath := path.Join(d.path, name.String())
+	st, status := d.conn.getattr(childPath)
+	if status != virtual.StatusOK {
+		return ci, status
+	}
+	isDir := uint32(st.st_mode)&uint32(C.S_IFMT) == uint32(C.S_IFDIR)
+	cp := C.CString(childPath)
+	defer C.free(unsafe.Pointer(cp))
+	d.conn.mu.Lock()
+	defer d.conn.mu.Unlock()
+	if isDir {
+		if !removeDirectory {
+			return ci, virtual.StatusErrIsDir
+		}
+		return ci, errStatus(C.call_rmdir(d.conn.op, cp))
+	}
+	if !removeLeaf {
+		return ci, virtual.StatusErrNotDir
+	}
+	return ci, errStatus(C.call_unlink(d.conn.op, cp))
 }
 func (d *fuseDir) VirtualSymlink(ctx context.Context, pointedTo virtual.Parser, linkName virtual.Component, requested virtual.AttributesMask, a *virtual.Attributes) (virtual.Leaf, virtual.ChangeInfo, virtual.Status) {
 	return nil, virtual.ChangeInfo{}, virtual.StatusErrROFS
@@ -398,21 +537,24 @@ func (f *fuseFile) VirtualGetAttributes(ctx context.Context, requested virtual.A
 }
 
 func (f *fuseFile) VirtualOpenSelf(ctx context.Context, shareAccess virtual.ShareMask, options *virtual.OpenExistingOptions, requested virtual.AttributesMask, a *virtual.Attributes) virtual.Status {
-	if shareAccess&virtual.ShareMaskWrite != 0 {
-		return virtual.StatusErrROFS
+	cp := C.CString(f.path)
+	defer C.free(unsafe.Pointer(cp))
+	f.conn.mu.Lock()
+	if options != nil && options.Truncate { // open-with-truncate, e.g. shell `>`
+		if r := C.call_truncate(f.conn.op, cp, 0); r < 0 {
+			f.conn.mu.Unlock()
+			return errStatus(r)
+		}
+	}
+	var fi C.struct_fuse_file_info
+	r := C.call_open(f.conn.op, cp, &fi)
+	f.conn.mu.Unlock()
+	if r < 0 {
+		return errStatus(r)
 	}
 	st, status := f.conn.getattr(f.path)
 	if status != virtual.StatusOK {
 		return status
-	}
-	cp := C.CString(f.path)
-	defer C.free(unsafe.Pointer(cp))
-	var fi C.struct_fuse_file_info
-	f.conn.mu.Lock()
-	r := C.call_open(f.conn.op, cp, &fi)
-	f.conn.mu.Unlock()
-	if r < 0 {
-		return virtual.StatusErrIO
 	}
 	statToAttrs(&st, f.path, requested, a)
 	return virtual.StatusOK
@@ -461,14 +603,51 @@ func (f *fuseFile) VirtualSeek(offset uint64, regionType virtual.RegionType) (*u
 func (f *fuseFile) VirtualApply(data any) bool { return false }
 
 func (f *fuseFile) VirtualSetAttributes(ctx context.Context, in *virtual.Attributes, requested virtual.AttributesMask, a *virtual.Attributes) virtual.Status {
-	return virtual.StatusErrROFS
+	cp := C.CString(f.path)
+	defer C.free(unsafe.Pointer(cp))
+	// Apply what `in` carries (its fieldsPresent), NOT what `requested` asks to
+	// read back — keying off the return mask was the truncate bug (memory.go).
+	if size, ok := in.GetSizeBytes(); ok {
+		f.conn.mu.Lock()
+		r := C.call_truncate(f.conn.op, cp, C.off_t(size))
+		f.conn.mu.Unlock()
+		if r < 0 {
+			return errStatus(r)
+		}
+	}
+	if perms, ok := in.GetPermissions(); ok {
+		f.conn.mu.Lock()
+		r := C.call_chmod(f.conn.op, cp, C.uint(perms.ToMode()))
+		f.conn.mu.Unlock()
+		if r < 0 {
+			return errStatus(r)
+		}
+	}
+	st, status := f.conn.getattr(f.path)
+	if status != virtual.StatusOK {
+		return status
+	}
+	statToAttrs(&st, f.path, requested, a)
+	return virtual.StatusOK
 }
 func (f *fuseFile) VirtualOpenNamedAttributes(ctx context.Context, createDirectory bool, requested virtual.AttributesMask, a *virtual.Attributes) (virtual.Directory, virtual.Status) {
 	return nil, virtual.StatusErrNoEnt
 }
 func (f *fuseFile) VirtualAllocate(off, size uint64) virtual.Status { return virtual.StatusErrROFS }
 func (f *fuseFile) VirtualWrite(buf []byte, offset uint64) (int, virtual.Status) {
-	return 0, virtual.StatusErrROFS
+	if len(buf) == 0 {
+		return 0, virtual.StatusOK
+	}
+	cp := C.CString(f.path)
+	defer C.free(unsafe.Pointer(cp))
+	var fi C.struct_fuse_file_info
+	f.conn.mu.Lock()
+	r := C.call_write(f.conn.op, cp, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len(buf)), C.off_t(offset), &fi)
+	f.conn.mu.Unlock()
+	if r < 0 {
+		return 0, errStatus(r)
+	}
+	return int(r), virtual.StatusOK
 }
 
 // goArgs converts a C argv (argc, char**) into a Go []string.
