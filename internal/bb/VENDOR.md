@@ -16,6 +16,8 @@ to these vendored types, and the lifted server (R2d) imports them unchanged.
 |---|---|---|
 | `path` | `filesystem/path/` | the pathname parser/scope-walker stack — `Component`, `Parser`, `Format`, `UNIXFormat`, `EmptyBuilder`, `Resolve`, the scope walkers — used by `pkg/virtual` (symlink targets) and the server (`pathParserToLinktext4`). |
 | `filesystem` | `filesystem/` | the leaf types the FSAL contract references: `FileType` (+ constants), `FileInfo`/`NewFileInfo`, `RegionType`, `DeviceNumber`, and `DeterministicFileModificationTimestamp`. |
+| `clock` | `clock/` | the `Clock` interface + `SystemClock`, used by the NFSv4 server for lease/timestamp handling. Stdlib-only; copied verbatim (no rewrite, no strip). |
+| `random` | `random/` | the `SingleThreadedGenerator`/`ThreadSafeGenerator` family, used by the server to mint state IDs / verifiers. Stdlib-only (`crypto/rand`, `math/rand`); copied verbatim. |
 
 ## Modifications, all deliberate and recorded
 
