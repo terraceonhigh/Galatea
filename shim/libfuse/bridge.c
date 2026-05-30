@@ -1,15 +1,21 @@
-/* C bridge for the libfuse shim: trampolines that hand exported Go functions to
- * the app as callbacks. Defined here (not in the cgo preamble) so we can include
- * cgo's generated _cgo_export.h, which declares the exported Go symbols with the
- * exact signatures cgo produced — re-declaring them in the preamble conflicts. */
+/* C bridge for the libfuse shim: the readdir trampoline, which must hand the
+ * app's readdir our exported Go filler (goFill). Defined here (not in the cgo
+ * preamble) so we can include cgo's generated _cgo_export.h — it declares goFill
+ * with the exact signature cgo produced; re-declaring it in the preamble
+ * conflicts. */
+/* FUSE_USE_VERSION and _FILE_OFFSET_BITS come from the package #cgo CFLAGS. */
+#include "fuse.h"
 #include <stdint.h>
-#include "fuse_probe.h"
+#include <string.h>
+#include <errno.h>
 #include "_cgo_export.h"
 
-/* 0c — invoke the app's readdir, handing it our Go filler and the collector
- * handle (carried as a uintptr_t, recast to the void* the filler expects). The
- * explicit (probe_fill_fn) cast reconciles cgo's char* against the typedef's
- * const char* — the same cast Phase 1 will use against fuse_fill_dir_t. */
-int call_probe_readdir(probe_readdir_fn fn, const char *path, uintptr_t buf) {
-	return fn(path, (void *)buf, (probe_fill_fn)goProbeFill);
+/* Invoke the app's readdir, handing it our Go filler and the collector handle
+ * (carried as uintptr_t, recast to the void* the filler expects). The explicit
+ * (fuse_fill_dir_t) cast reconciles cgo's char* against fuse.h's const char*. */
+int call_readdir(const struct fuse_operations *op, const char *path, uintptr_t buf) {
+	if (!op->readdir) return -ENOSYS;
+	struct fuse_file_info fi;
+	memset(&fi, 0, sizeof(fi));
+	return op->readdir(path, (void *)buf, (fuse_fill_dir_t)goFill, 0, &fi);
 }
