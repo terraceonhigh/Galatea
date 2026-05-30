@@ -6,6 +6,7 @@ import (
 	"io"
 	"sort"
 	"sync"
+	"sync/atomic"
 )
 
 // NewMemoryHandleResolver builds a HandleResolver (DEC-017 Option B) over the
@@ -15,25 +16,13 @@ import (
 // NFSv4 server needs this so a client's PUTFH — replaying a handle it obtained
 // from an earlier GETFH — resolves to the right node.
 //
-// The index is a snapshot taken at construction. That is correct for this
-// read-only FSAL (the tree is immutable); a mutable backend would maintain the
-// index as nodes come and go.
+// It resolves by walking the *live* tree on each call, so nodes created after
+// construction (mkdir, file create — R6b) resolve and removed nodes return
+// stale. A snapshot index would miss them (it did: rmdir of a freshly-created
+// dir failed with ESTALE because the client PUTFH'd the new dir's handle). The
+// walk is O(tree) per resolve — fine for this in-memory test/demo FSAL; a real
+// backend would keep a live index.
 func NewMemoryHandleResolver(root Directory) HandleResolver {
-	index := map[uint64]Node{}
-	var walk func(n Node)
-	walk = func(n Node) {
-		switch t := n.(type) {
-		case *memoryDirectory:
-			index[t.inode] = t
-			for _, c := range t.children {
-				walk(c)
-			}
-		case *memoryFile:
-			index[t.inode] = t
-		}
-	}
-	walk(root)
-
 	return func(r io.ByteReader) (DirectoryChild, Status) {
 		var h [8]byte
 		for i := range h {
@@ -43,12 +32,39 @@ func NewMemoryHandleResolver(root Directory) HandleResolver {
 			}
 			h[i] = b
 		}
-		n, ok := index[binary.BigEndian.Uint64(h[:])]
-		if !ok {
-			return DirectoryChild{}, StatusErrStale
+		if n := findByInode(root, binary.BigEndian.Uint64(h[:])); n != nil {
+			return childOf(n), StatusOK
 		}
-		return childOf(n), StatusOK
+		return DirectoryChild{}, StatusErrStale
 	}
+}
+
+// findByInode searches the live tree rooted at n for the node with the given
+// inode. It snapshots each directory's children under that directory's lock,
+// then recurses without holding it (so it never nests directory locks).
+func findByInode(n Node, target uint64) Node {
+	switch t := n.(type) {
+	case *memoryFile:
+		if t.inode == target {
+			return t
+		}
+	case *memoryDirectory:
+		if t.inode == target {
+			return t
+		}
+		t.mu.Lock()
+		kids := make([]Node, 0, len(t.children))
+		for _, c := range t.children {
+			kids = append(kids, c)
+		}
+		t.mu.Unlock()
+		for _, c := range kids {
+			if found := findByInode(c, target); found != nil {
+				return found
+			}
+		}
+	}
+	return nil
 }
 
 // memoryFileHandle encodes a node's stable inode number as an 8-byte NFS file
@@ -241,12 +257,22 @@ func (f *memoryFile) VirtualWrite(buf []byte, offset uint64) (int, Status) {
 	return len(buf), StatusOK
 }
 
-// --- memoryDirectory: a read-only directory -------------------------------
+// --- memoryDirectory --------------------------------------------------------
 
+// memoryDirectory is an in-memory directory. Created via
+// NewWritableMemoryDirectory it is mutable (R6b): create/mkdir/remove add and
+// drop children under the directory's own mutex, with inodes drawn from a
+// counter shared across the tree (so every node gets a unique file handle).
+// The legacy NewMemoryDirectory constructor leaves nextInode nil — that tree is
+// read-only (mutations return ROFS), as the read-only fixtures and the original
+// demo expect. A per-directory lock (not a tree-wide one) is used so a parent's
+// readdir can read a child's attributes without re-entering the same mutex.
 type memoryDirectory struct {
-	inode    uint64
-	perms    Permissions
-	children map[string]Node
+	mu        sync.Mutex
+	inode     uint64
+	perms     Permissions
+	children  map[string]Node
+	nextInode *atomic.Uint64 // non-nil => writable; shared across the tree
 }
 
 // NewMemoryDirectory returns a read-only in-memory directory. Each value
@@ -258,6 +284,22 @@ func NewMemoryDirectory(inode uint64, perms Permissions, children map[string]Nod
 	}
 	return &memoryDirectory{inode: inode, perms: perms, children: children}
 }
+
+// NewWritableMemoryDirectory returns an empty, writable in-memory directory
+// (inode 1). Files and subdirectories created beneath it, recursively, share a
+// tree-wide inode counter so each receives a unique file handle.
+func NewWritableMemoryDirectory(perms Permissions) Directory {
+	counter := &atomic.Uint64{}
+	counter.Store(1) // root is inode 1; the first created child is 2
+	return &memoryDirectory{
+		inode:     1,
+		perms:     perms,
+		children:  map[string]Node{},
+		nextInode: counter,
+	}
+}
+
+func (d *memoryDirectory) writable() bool { return d.nextInode != nil }
 
 func (d *memoryDirectory) fillAttributes(requested AttributesMask, a *Attributes) {
 	if requested&AttributesMaskFileType != 0 {
@@ -291,11 +333,22 @@ func (d *memoryDirectory) fillAttributes(requested AttributesMask, a *Attributes
 }
 
 func (d *memoryDirectory) VirtualGetAttributes(ctx context.Context, requested AttributesMask, attributes *Attributes) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.fillAttributes(requested, attributes)
 }
 
 func (d *memoryDirectory) VirtualSetAttributes(ctx context.Context, in *Attributes, requested AttributesMask, attributes *Attributes) Status {
-	return StatusErrROFS
+	if !d.writable() {
+		return StatusErrROFS
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if perms, ok := in.GetPermissions(); ok {
+		d.perms = perms
+	}
+	d.fillAttributes(requested, attributes)
+	return StatusOK
 }
 
 func (d *memoryDirectory) VirtualApply(data any) bool { return false }
@@ -306,14 +359,29 @@ func (d *memoryDirectory) VirtualOpenNamedAttributes(ctx context.Context, create
 
 func (d *memoryDirectory) VirtualOpenChild(ctx context.Context, name Component, shareAccess ShareMask, createAttributes *Attributes, existingOptions *OpenExistingOptions, requested AttributesMask, openedFileAttributes *Attributes) (Leaf, AttributesMask, ChangeInfo, Status) {
 	ci := ChangeInfo{}
+	d.mu.Lock()
 	child, ok := d.children[name.String()]
 	if !ok {
 		if createAttributes != nil {
-			// Would create — but this FSAL is read-only.
-			return nil, 0, ci, StatusErrROFS
+			if !d.writable() {
+				d.mu.Unlock()
+				return nil, 0, ci, StatusErrROFS
+			}
+			// Create a new regular file.
+			perms := PermissionsRead | PermissionsWrite
+			if p, ok := createAttributes.GetPermissions(); ok {
+				perms = p
+			}
+			f := &memoryFile{inode: d.nextInode.Add(1), perms: perms}
+			d.children[name.String()] = f
+			d.mu.Unlock()
+			s := f.VirtualOpenSelf(ctx, shareAccess, &OpenExistingOptions{}, requested, openedFileAttributes)
+			return f, 0, ci, s
 		}
+		d.mu.Unlock()
 		return nil, 0, ci, StatusErrNoEnt
 	}
+	d.mu.Unlock()
 	if existingOptions == nil {
 		// Caller asked to create-only, but the file exists.
 		return nil, 0, ci, StatusErrExist
@@ -333,7 +401,9 @@ func (d *memoryDirectory) VirtualLink(ctx context.Context, name Component, leaf 
 }
 
 func (d *memoryDirectory) VirtualLookup(ctx context.Context, name Component, requested AttributesMask, out *Attributes) (DirectoryChild, Status) {
+	d.mu.Lock()
 	child, ok := d.children[name.String()]
+	d.mu.Unlock()
 	if !ok {
 		return DirectoryChild{}, StatusErrNoEnt
 	}
@@ -342,7 +412,24 @@ func (d *memoryDirectory) VirtualLookup(ctx context.Context, name Component, req
 }
 
 func (d *memoryDirectory) VirtualMkdir(name Component, requested AttributesMask, attributes *Attributes) (Directory, ChangeInfo, Status) {
-	return nil, ChangeInfo{}, StatusErrROFS
+	ci := ChangeInfo{}
+	if !d.writable() {
+		return nil, ci, StatusErrROFS
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if _, ok := d.children[name.String()]; ok {
+		return nil, ci, StatusErrExist
+	}
+	child := &memoryDirectory{
+		inode:     d.nextInode.Add(1),
+		perms:     PermissionsRead | PermissionsWrite | PermissionsExecute,
+		children:  map[string]Node{},
+		nextInode: d.nextInode,
+	}
+	d.children[name.String()] = child
+	child.fillAttributes(requested, attributes)
+	return child, ci, StatusOK
 }
 
 func (d *memoryDirectory) VirtualMknod(ctx context.Context, name Component, fileType FileType, requested AttributesMask, attributes *Attributes) (Leaf, ChangeInfo, Status) {
@@ -350,24 +437,33 @@ func (d *memoryDirectory) VirtualMknod(ctx context.Context, name Component, file
 }
 
 func (d *memoryDirectory) VirtualReadDir(ctx context.Context, firstCookie uint64, requested AttributesMask, reporter DirectoryEntryReporter) Status {
+	// Snapshot the children under the lock, then release it before calling
+	// each child's VirtualGetAttributes (which takes the child's own lock) —
+	// avoids holding d's lock across nested calls.
+	d.mu.Lock()
 	names := make([]string, 0, len(d.children))
 	for name := range d.children {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	nodes := make([]Node, len(names))
+	for i, name := range names {
+		nodes[i] = d.children[name]
+	}
+	d.mu.Unlock()
+
 	for i, name := range names {
 		cookie := uint64(i + 1)
 		if cookie <= firstCookie {
 			continue
 		}
-		child := d.children[name]
 		var attributes Attributes
-		child.VirtualGetAttributes(ctx, requested, &attributes)
+		nodes[i].VirtualGetAttributes(ctx, requested, &attributes)
 		component, ok := NewComponent(name)
 		if !ok {
 			return StatusErrIO
 		}
-		if !reporter.ReportEntry(cookie, component, childOf(child), &attributes) {
+		if !reporter.ReportEntry(cookie, component, childOf(nodes[i]), &attributes) {
 			break
 		}
 	}
@@ -379,7 +475,33 @@ func (d *memoryDirectory) VirtualRename(oldName Component, newDirectory Director
 }
 
 func (d *memoryDirectory) VirtualRemove(name Component, removeDirectory, removeLeaf bool) (ChangeInfo, Status) {
-	return ChangeInfo{}, StatusErrROFS
+	ci := ChangeInfo{}
+	if !d.writable() {
+		return ci, StatusErrROFS
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	child, ok := d.children[name.String()]
+	if !ok {
+		return ci, StatusErrNoEnt
+	}
+	if subdir, isDir := child.(*memoryDirectory); isDir {
+		if !removeDirectory {
+			return ci, StatusErrIsDir
+		}
+		// POSIX rmdir refuses a non-empty directory.
+		subdir.mu.Lock()
+		empty := len(subdir.children) == 0
+		subdir.mu.Unlock()
+		if !empty {
+			return ci, StatusErrNotEmpty
+		}
+	} else if !removeLeaf {
+		// A leaf where the caller intended to remove only a directory.
+		return ci, StatusErrNotDir
+	}
+	delete(d.children, name.String())
+	return ci, StatusOK
 }
 
 func (d *memoryDirectory) VirtualSymlink(ctx context.Context, pointedTo Parser, linkName Component, requested AttributesMask, attributes *Attributes) (Leaf, ChangeInfo, Status) {

@@ -47,14 +47,23 @@ func (p loggingProgram) NfsV4Nfsproc4Compound(ctx context.Context, args *nfsv4.C
 // osfs grows inode-based handles, `serve` can take a host directory like the
 // other subcommands.
 func demoTree() virtual.Directory {
-	rw := virtual.PermissionsRead | virtual.PermissionsWrite
-	rx := virtual.PermissionsRead | virtual.PermissionsExecute
-	return virtual.NewMemoryDirectory(1, rx, map[string]virtual.Node{
-		"README.txt": virtual.NewMemoryFile(2, rw, []byte("Hello from Galatea — an in-house userspace NFSv4 server.\n")),
-		"docs": virtual.NewMemoryDirectory(3, rx, map[string]virtual.Node{
-			"note.txt": virtual.NewMemoryFile(4, rw, []byte("A second file, one directory deep.\n")),
-		}),
-	})
+	rwx := virtual.PermissionsRead | virtual.PermissionsWrite | virtual.PermissionsExecute
+	root := virtual.NewWritableMemoryDirectory(rwx)
+	ctx := context.Background()
+	write := func(dir virtual.Directory, name, content string) {
+		f, _, _, st := dir.VirtualOpenChild(ctx, virtual.MustNewComponent(name),
+			virtual.ShareMaskWrite, &virtual.Attributes{}, &virtual.OpenExistingOptions{}, 0, &virtual.Attributes{})
+		if st == virtual.StatusOK {
+			_, _ = f.VirtualWrite([]byte(content), 0)
+			f.VirtualClose(virtual.ShareMaskWrite)
+		}
+	}
+	write(root, "README.txt", "Hello from Galatea — an in-house userspace NFSv4 server.\n"+
+		"This tree is writable in memory: try  mkdir, touch, echo > file, rm.\n")
+	if sub, _, st := root.VirtualMkdir(virtual.MustNewComponent("docs"), 0, &virtual.Attributes{}); st == virtual.StatusOK {
+		write(sub, "note.txt", "A second file, one directory deep.\n")
+	}
+	return root
 }
 
 // doServe stands the lifted NFSv4 server up on a loopback TCP port until
@@ -64,7 +73,7 @@ func demoTree() virtual.Directory {
 func doServe(hostDir, addr string) error {
 	var root virtual.Directory
 	var resolver virtual.HandleResolver
-	label := "in-memory demo tree"
+	label := "in-memory demo tree [read-write]"
 	if hostDir == "" {
 		root = demoTree()
 		resolver = virtual.NewMemoryHandleResolver(root)
@@ -73,7 +82,7 @@ func doServe(hostDir, addr string) error {
 		if err != nil {
 			return fmt.Errorf("open host dir %q: %w", hostDir, err)
 		}
-		root, resolver, label = r, osfs.NewHandleResolver(r), hostDir
+		root, resolver, label = r, osfs.NewHandleResolver(r), hostDir+" [read-only]"
 	}
 	var program nfsv4.Nfs4Program = nfssrv.NewReadOnlyProgram(root, resolver)
 	if os.Getenv("GALATEA_TRACE") != "" {
@@ -93,7 +102,7 @@ func doServe(hostDir, addr string) error {
 	defer ln.Close()
 
 	port := ln.Addr().(*net.TCPAddr).Port
-	fmt.Printf("galatea: serving %s (read-only) over NFSv4 on %s\n", label, ln.Addr())
+	fmt.Printf("galatea: serving %s over NFSv4 on %s\n", label, ln.Addr())
 	fmt.Printf("galatea: try:  mount_nfs -o vers=4.0,port=%d,mountport=%d,tcp localhost:/ /tmp/galatea-mnt\n", port, port)
 	fmt.Printf("galatea: then: ls /tmp/galatea-mnt   (Ctrl-C to stop)\n")
 

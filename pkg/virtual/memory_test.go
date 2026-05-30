@@ -172,6 +172,60 @@ func TestDirectoryMutationsRejected(t *testing.T) {
 	}
 }
 
+// TestWritableDirectory covers the R6b directory-mutation path: a writable
+// in-memory root supports create (OpenChild), mkdir, and remove/rmdir, with
+// created nodes getting distinct inode-derived handles, and rmdir refusing a
+// non-empty directory.
+func TestWritableDirectory(t *testing.T) {
+	ctx := context.Background()
+	root := NewWritableMemoryDirectory(PermissionsRead | PermissionsWrite | PermissionsExecute)
+
+	// Create a regular file and write to it.
+	var fa Attributes
+	leaf, _, _, st := root.VirtualOpenChild(ctx, MustNewComponent("new.txt"),
+		ShareMaskWrite, &Attributes{}, &OpenExistingOptions{}, AttributesMaskFileHandle, &fa)
+	if st != StatusOK {
+		t.Fatalf("create new.txt: %v", st)
+	}
+	if _, st := leaf.VirtualWrite([]byte("hi"), 0); st != StatusOK {
+		t.Fatalf("write new.txt: %v", st)
+	}
+
+	// Mkdir, then create a file inside it.
+	subChild, _, st := root.VirtualMkdir(MustNewComponent("sub"), AttributesMaskFileHandle, &Attributes{})
+	if st != StatusOK {
+		t.Fatalf("mkdir sub: %v", st)
+	}
+	if _, _, _, st := subChild.VirtualOpenChild(ctx, MustNewComponent("inner"),
+		ShareMaskWrite, &Attributes{}, &OpenExistingOptions{}, 0, &Attributes{}); st != StatusOK {
+		t.Fatalf("create sub/inner: %v", st)
+	}
+
+	// Distinct handles for distinct nodes.
+	if string(fa.GetFileHandle()) == string(memoryFileHandle(1)) {
+		t.Error("created file shares the root's handle")
+	}
+
+	// rmdir on a non-empty dir is refused.
+	if _, st := root.VirtualRemove(MustNewComponent("sub"), true, false); st != StatusErrNotEmpty {
+		t.Errorf("rmdir non-empty sub = %v, want NotEmpty", st)
+	}
+	// Remove the inner file, then the now-empty dir.
+	if _, st := subChild.VirtualRemove(MustNewComponent("inner"), false, true); st != StatusOK {
+		t.Errorf("remove sub/inner: %v", st)
+	}
+	if _, st := root.VirtualRemove(MustNewComponent("sub"), true, false); st != StatusOK {
+		t.Errorf("rmdir empty sub: %v", st)
+	}
+	// Remove the file; it's gone afterward.
+	if _, st := root.VirtualRemove(MustNewComponent("new.txt"), false, true); st != StatusOK {
+		t.Errorf("remove new.txt: %v", st)
+	}
+	if _, st := root.VirtualLookup(ctx, MustNewComponent("new.txt"), 0, &Attributes{}); st != StatusErrNoEnt {
+		t.Errorf("lookup removed new.txt = %v, want NoEnt", st)
+	}
+}
+
 // TestFileWrite covers the R6a write path: a memory file's contents are
 // mutable via VirtualWrite (with zero-extension past EOF) and truncatable via
 // VirtualSetAttributes(size), and reads see the new bytes.
