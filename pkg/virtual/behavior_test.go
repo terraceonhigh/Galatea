@@ -70,11 +70,11 @@ func TestOpenChildDecisionTree(t *testing.T) {
 			t.Errorf("= %v, want IsDir", st)
 		}
 	})
-	t.Run("write share rejected", func(t *testing.T) {
+	t.Run("write share accepted (files are writable, R6)", func(t *testing.T) {
 		root := buildTree()
 		_, _, _, st := root.VirtualOpenChild(ctx, read, ShareMaskWrite, nil, &OpenExistingOptions{}, 0, &Attributes{})
-		if st != StatusErrROFS {
-			t.Errorf("= %v, want ROFS", st)
+		if st != StatusOK {
+			t.Errorf("= %v, want OK", st)
 		}
 	})
 }

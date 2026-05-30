@@ -19,12 +19,12 @@ import (
 // osfs grows inode-based handles, `serve` can take a host directory like the
 // other subcommands.
 func demoTree() virtual.Directory {
-	r := virtual.PermissionsRead
+	rw := virtual.PermissionsRead | virtual.PermissionsWrite
 	rx := virtual.PermissionsRead | virtual.PermissionsExecute
 	return virtual.NewMemoryDirectory(1, rx, map[string]virtual.Node{
-		"README.txt": virtual.NewMemoryFile(2, r, []byte("Hello from Galatea — an in-house userspace NFSv4 server.\n")),
+		"README.txt": virtual.NewMemoryFile(2, rw, []byte("Hello from Galatea — an in-house userspace NFSv4 server.\n")),
 		"docs": virtual.NewMemoryDirectory(3, rx, map[string]virtual.Node{
-			"note.txt": virtual.NewMemoryFile(4, r, []byte("A second file, one directory deep.\n")),
+			"note.txt": virtual.NewMemoryFile(4, rw, []byte("A second file, one directory deep.\n")),
 		}),
 	})
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"io"
 	"sort"
+	"sync"
 )
 
 // NewMemoryHandleResolver builds a HandleResolver (DEC-017 Option B) over the
@@ -80,19 +81,27 @@ func childOf(n Node) DirectoryChild {
 	panic("node is neither a Directory nor a Leaf")
 }
 
-// --- memoryFile: a read-only regular file ---------------------------------
+// --- memoryFile: a writable regular file ----------------------------------
 
+// memoryFile is an in-memory regular file. Its contents and size are mutable
+// (R6 write path); a per-file mutex serializes reads, writes, truncations, and
+// attribute reads of this file. Directory structure is a separate concern (the
+// directory's own concurrency); a memoryFile only guards its own bytes.
 type memoryFile struct {
+	mu       sync.Mutex
 	inode    uint64
 	perms    Permissions
 	contents []byte
 }
 
-// NewMemoryFile returns a read-only in-memory regular file.
+// NewMemoryFile returns an in-memory regular file with the given initial
+// contents. The file is writable (see VirtualWrite / VirtualSetAttributes).
 func NewMemoryFile(inode uint64, perms Permissions, contents []byte) Leaf {
 	return &memoryFile{inode: inode, perms: perms, contents: contents}
 }
 
+// fillAttributes writes the requested attributes. The caller must hold f.mu
+// (it reads mutable size/perms).
 func (f *memoryFile) fillAttributes(requested AttributesMask, a *Attributes) {
 	if requested&AttributesMaskFileType != 0 {
 		a.SetFileType(FileTypeRegularFile)
@@ -125,11 +134,36 @@ func (f *memoryFile) fillAttributes(requested AttributesMask, a *Attributes) {
 }
 
 func (f *memoryFile) VirtualGetAttributes(ctx context.Context, requested AttributesMask, attributes *Attributes) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.fillAttributes(requested, attributes)
 }
 
+// resize truncates or zero-extends the contents to size. Caller holds f.mu.
+func (f *memoryFile) resize(size uint64) {
+	switch n := uint64(len(f.contents)); {
+	case size < n:
+		f.contents = f.contents[:size]
+	case size > n:
+		f.contents = append(f.contents, make([]byte, size-n)...)
+	}
+}
+
 func (f *memoryFile) VirtualSetAttributes(ctx context.Context, in *Attributes, requested AttributesMask, attributes *Attributes) Status {
-	return StatusErrROFS
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if requested&AttributesMaskSizeBytes != 0 {
+		if size, ok := in.GetSizeBytes(); ok {
+			f.resize(size)
+		}
+	}
+	if requested&AttributesMaskPermissions != 0 {
+		if perms, ok := in.GetPermissions(); ok {
+			f.perms = perms
+		}
+	}
+	f.fillAttributes(requested, attributes)
+	return StatusOK
 }
 
 func (f *memoryFile) VirtualApply(data any) bool { return false }
@@ -138,9 +172,18 @@ func (f *memoryFile) VirtualOpenNamedAttributes(ctx context.Context, createDirec
 	return nil, StatusErrNoEnt
 }
 
-func (f *memoryFile) VirtualAllocate(off, size uint64) Status { return StatusErrROFS }
+func (f *memoryFile) VirtualAllocate(off, size uint64) Status {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if end := off + size; end > uint64(len(f.contents)) {
+		f.resize(end)
+	}
+	return StatusOK
+}
 
 func (f *memoryFile) VirtualSeek(offset uint64, regionType RegionType) (*uint64, Status) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	size := uint64(len(f.contents))
 	if offset >= size {
 		return nil, StatusErrNXIO
@@ -159,14 +202,19 @@ func (f *memoryFile) VirtualSeek(offset uint64, regionType RegionType) (*uint64,
 }
 
 func (f *memoryFile) VirtualOpenSelf(ctx context.Context, shareAccess ShareMask, options *OpenExistingOptions, requested AttributesMask, attributes *Attributes) Status {
-	if shareAccess&ShareMaskWrite != 0 {
-		return StatusErrROFS
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if options != nil && options.Truncate {
+		// Open-with-truncate (e.g. shell `>`): empty the file first.
+		f.resize(0)
 	}
 	f.fillAttributes(requested, attributes)
 	return StatusOK
 }
 
 func (f *memoryFile) VirtualRead(buf []byte, offset uint64) (int, bool, Status) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	size := uint64(len(f.contents))
 	if offset >= size {
 		// At or past end-of-file: nothing to read. An NFS client (and
@@ -181,8 +229,16 @@ func (f *memoryFile) VirtualRead(buf []byte, offset uint64) (int, bool, Status) 
 
 func (f *memoryFile) VirtualClose(shareAccess ShareMask) {}
 
+// VirtualWrite writes buf at offset, zero-extending the file first if the write
+// starts past the current end.
 func (f *memoryFile) VirtualWrite(buf []byte, offset uint64) (int, Status) {
-	return 0, StatusErrROFS
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if end := offset + uint64(len(buf)); end > uint64(len(f.contents)) {
+		f.resize(end)
+	}
+	copy(f.contents[offset:], buf)
+	return len(buf), StatusOK
 }
 
 // --- memoryDirectory: a read-only directory -------------------------------

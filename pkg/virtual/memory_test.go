@@ -159,7 +159,10 @@ func TestGetFileInfo(t *testing.T) {
 	}
 }
 
-func TestReadOnlyMutationsRejected(t *testing.T) {
+// TestDirectoryMutationsRejected: directory structure is still read-only in
+// R6a (create/mkdir/remove return ROFS); only file *contents* are writable.
+// (Directory mutation is R6b.)
+func TestDirectoryMutationsRejected(t *testing.T) {
 	root := buildTree()
 	if _, _, st := root.VirtualMkdir(MustNewComponent("x"), 0, &Attributes{}); st != StatusErrROFS {
 		t.Errorf("VirtualMkdir = %v, want StatusErrROFS", st)
@@ -167,8 +170,40 @@ func TestReadOnlyMutationsRejected(t *testing.T) {
 	if _, st := root.VirtualRemove(MustNewComponent("hello.txt"), false, true); st != StatusErrROFS {
 		t.Errorf("VirtualRemove = %v, want StatusErrROFS", st)
 	}
-	leaf := NewMemoryFile(2, PermissionsRead, []byte(helloContents))
-	if _, st := leaf.VirtualWrite([]byte("x"), 0); st != StatusErrROFS {
-		t.Errorf("VirtualWrite = %v, want StatusErrROFS", st)
+}
+
+// TestFileWrite covers the R6a write path: a memory file's contents are
+// mutable via VirtualWrite (with zero-extension past EOF) and truncatable via
+// VirtualSetAttributes(size), and reads see the new bytes.
+func TestFileWrite(t *testing.T) {
+	leaf := NewMemoryFile(2, PermissionsRead|PermissionsWrite, []byte("hello"))
+
+	// Overwrite within bounds.
+	if n, st := leaf.VirtualWrite([]byte("HELLO"), 0); st != StatusOK || n != 5 {
+		t.Fatalf("write = (%d, %v), want (5, OK)", n, st)
+	}
+	// Write past EOF zero-extends the gap.
+	if n, st := leaf.VirtualWrite([]byte("X"), 7); st != StatusOK || n != 1 {
+		t.Fatalf("write past EOF = (%d, %v), want (1, OK)", n, st)
+	}
+	buf := make([]byte, 16)
+	n, _, st := leaf.VirtualRead(buf, 0)
+	if st != StatusOK {
+		t.Fatalf("read = %v", st)
+	}
+	if got, want := string(buf[:n]), "HELLO\x00\x00X"; got != want {
+		t.Errorf("contents = %q, want %q", got, want)
+	}
+
+	// Truncate via SetAttributes(size).
+	var in Attributes
+	in.SetSizeBytes(3)
+	var out Attributes
+	if st := leaf.VirtualSetAttributes(context.Background(), &in, AttributesMaskSizeBytes, &out); st != StatusOK {
+		t.Fatalf("setattr(size=3) = %v", st)
+	}
+	n, _, _ = leaf.VirtualRead(buf, 0)
+	if got := string(buf[:n]); got != "HEL" {
+		t.Errorf("after truncate, contents = %q, want %q", got, "HEL")
 	}
 }
