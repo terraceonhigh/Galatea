@@ -25,21 +25,26 @@ usage:
   galatea stat  <host-dir> [path]   show a node's attributes
   galatea cat   <host-dir> <path>   print a file's contents
   galatea tree  <host-dir> [path]   print the tree recursively
-  galatea serve [addr]              serve a demo tree over NFSv4 (default 127.0.0.1:2049)
+  galatea serve [host-dir] [addr]   serve a dir (or a demo tree) over NFSv4 (addr default 127.0.0.1:2049)
 
 <host-dir> is the directory Galatea exposes as the FSAL root.
 [path] is a slash-separated path *within* the FSAL (default: the root).
 `
 
 func main() {
-	// `serve` is the one subcommand that takes no <host-dir> (it exposes an
-	// in-memory demo tree — see serve.go); dispatch it before the arg checks.
+	// `serve` parses its own args (an optional <host-dir> and/or <addr>); an
+	// argument containing ":" is the listen address, otherwise the host dir.
+	// With no host dir it exposes an in-memory demo tree (see serve.go).
 	if len(os.Args) >= 2 && os.Args[1] == "serve" {
-		addr := "127.0.0.1:2049"
-		if len(os.Args) > 2 {
-			addr = os.Args[2]
+		hostDir, addr := "", "127.0.0.1:2049"
+		for _, arg := range os.Args[2:] {
+			if strings.Contains(arg, ":") {
+				addr = arg
+			} else {
+				hostDir = arg
+			}
 		}
-		if err := doServe(addr); err != nil {
+		if err := doServe(hostDir, addr); err != nil {
 			fatalf("%v", err)
 		}
 		return

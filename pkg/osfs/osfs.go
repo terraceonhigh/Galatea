@@ -6,6 +6,14 @@
 // It is the first Galatea backend over an externally-defined data source
 // (the in-memory FSAL is a test fixture); see docs/DECISIONS.md DEC-006.
 // Read-only by design: every mutating operation returns StatusErrROFS.
+//
+// File handles (DEC-017 Option B) are the node's path relative to the FSAL
+// root; NewHandleResolver resolves them back. This bounds a handle's length
+// by the path length — fine for ordinary trees, but a deeply-nested path can
+// exceed NFS4_FHSIZE (128 bytes); an inode/hash scheme would lift that and is
+// the natural future refinement. The mandatory attributes the NFSv4 server
+// requires (FileHandle, HasNamedAttributes, IsInNamedAttributeDirectory — see
+// MISTAKES.md M-006) are all set here.
 package osfs
 
 import (
@@ -14,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"syscall"
 
 	"github.com/terraceonhigh/galatea/pkg/virtual"
@@ -33,7 +42,65 @@ func Root(hostPath string) (virtual.Directory, error) {
 	if !info.IsDir() {
 		return nil, &os.PathError{Op: "root", Path: abs, Err: syscall.ENOTDIR}
 	}
-	return &directory{path: abs}, nil
+	return &directory{path: abs, root: abs}, nil
+}
+
+// osfsHandle encodes a node's file handle as its path relative to the FSAL
+// root. The root itself encodes as ".".
+func osfsHandle(root, hostPath string) []byte {
+	rel, err := filepath.Rel(root, hostPath)
+	if err != nil {
+		rel = "."
+	}
+	return []byte(rel)
+}
+
+// NewHandleResolver returns a HandleResolver (DEC-017 Option B) for an osfs
+// tree rooted at rootDir, which must be an *osfs directory. It decodes the
+// path-relative handle, rejects any handle that escapes the root, stats the
+// target, and returns its node.
+func NewHandleResolver(rootDir virtual.Directory) virtual.HandleResolver {
+	d, ok := rootDir.(*directory)
+	if !ok {
+		// Not an osfs root; resolve nothing.
+		return func(io.ByteReader) (virtual.DirectoryChild, virtual.Status) {
+			return virtual.DirectoryChild{}, virtual.StatusErrBadHandle
+		}
+	}
+	root := d.root
+	return func(r io.ByteReader) (virtual.DirectoryChild, virtual.Status) {
+		var sb strings.Builder
+		for {
+			b, err := r.ReadByte()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return virtual.DirectoryChild{}, virtual.StatusErrBadHandle
+			}
+			sb.WriteByte(b)
+		}
+		rel := filepath.Clean(sb.String())
+		// Reject handles that escape the root.
+		if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+			return virtual.DirectoryChild{}, virtual.StatusErrBadHandle
+		}
+		hostPath := filepath.Join(root, rel)
+		fi, err := os.Lstat(hostPath)
+		if err != nil {
+			return virtual.DirectoryChild{}, virtual.StatusErrStale
+		}
+		return childOf(nodeFor(hostPath, root, fi)), virtual.StatusOK
+	}
+}
+
+// childOf wraps a node as a DirectoryChild.
+func childOf(n virtual.Node) virtual.DirectoryChild {
+	var c virtual.DirectoryChild
+	if dir, ok := n.(virtual.Directory); ok {
+		return c.FromDirectory(dir)
+	}
+	return c.FromLeaf(n.(virtual.Leaf))
 }
 
 // fileTypeOf maps an os.FileMode to a virtual.FileType.
@@ -58,8 +125,9 @@ func fileTypeOf(mode os.FileMode) virtual.FileType {
 	}
 }
 
-// fillAttributes populates the requested attributes from an os.FileInfo.
-func fillAttributes(fi os.FileInfo, requested virtual.AttributesMask, a *virtual.Attributes) {
+// fillAttributes populates the requested attributes from an os.FileInfo. It
+// needs the node's host path and the FSAL root to compute the file handle.
+func fillAttributes(fi os.FileInfo, hostPath, root string, requested virtual.AttributesMask, a *virtual.Attributes) {
 	if requested&virtual.AttributesMaskFileType != 0 {
 		a.SetFileType(fileTypeOf(fi.Mode()))
 	}
@@ -75,6 +143,15 @@ func fillAttributes(fi os.FileInfo, requested virtual.AttributesMask, a *virtual
 	}
 	if requested&virtual.AttributesMaskLastDataModificationTime != 0 {
 		a.SetLastDataModificationTime(fi.ModTime())
+	}
+	if requested&virtual.AttributesMaskFileHandle != 0 {
+		a.SetFileHandle(osfsHandle(root, hostPath))
+	}
+	if requested&virtual.AttributesMaskHasNamedAttributes != 0 {
+		a.SetHasNamedAttributes(false)
+	}
+	if requested&virtual.AttributesMaskIsInNamedAttributeDirectory != 0 {
+		a.SetIsInNamedAttributeDirectory(false)
 	}
 	var ino uint64
 	var nlink uint32 = 1
@@ -96,18 +173,19 @@ func fillAttributes(fi os.FileInfo, requested virtual.AttributesMask, a *virtual
 }
 
 // nodeFor builds the virtual node (directory or leaf) for a host path,
-// given its already-resolved FileInfo.
-func nodeFor(path string, fi os.FileInfo) virtual.Node {
+// given its already-resolved FileInfo, carrying the FSAL root for handles.
+func nodeFor(path, root string, fi os.FileInfo) virtual.Node {
 	if fi.IsDir() {
-		return &directory{path: path}
+		return &directory{path: path, root: root}
 	}
-	return &file{path: path}
+	return &file{path: path, root: root}
 }
 
 // --- directory ------------------------------------------------------------
 
 type directory struct {
 	path string
+	root string
 }
 
 func (d *directory) VirtualGetAttributes(ctx context.Context, requested virtual.AttributesMask, attributes *virtual.Attributes) {
@@ -120,7 +198,7 @@ func (d *directory) VirtualGetAttributes(ctx context.Context, requested virtual.
 		}
 		return
 	}
-	fillAttributes(fi, requested, attributes)
+	fillAttributes(fi, d.path, d.root, requested, attributes)
 }
 
 func (d *directory) VirtualSetAttributes(ctx context.Context, in *virtual.Attributes, requested virtual.AttributesMask, attributes *virtual.Attributes) virtual.Status {
@@ -142,13 +220,9 @@ func (d *directory) VirtualLookup(ctx context.Context, name virtual.Component, r
 		}
 		return virtual.DirectoryChild{}, virtual.StatusErrIO
 	}
-	node := nodeFor(childPath, fi)
-	fillAttributes(fi, requested, out)
-	var c virtual.DirectoryChild
-	if dir, ok := node.(virtual.Directory); ok {
-		return c.FromDirectory(dir), virtual.StatusOK
-	}
-	return c.FromLeaf(node.(virtual.Leaf)), virtual.StatusOK
+	node := nodeFor(childPath, d.root, fi)
+	fillAttributes(fi, childPath, d.root, requested, out)
+	return childOf(node), virtual.StatusOK
 }
 
 func (d *directory) VirtualReadDir(ctx context.Context, firstCookie uint64, requested virtual.AttributesMask, reporter virtual.DirectoryEntryReporter) virtual.Status {
@@ -175,16 +249,10 @@ func (d *directory) VirtualReadDir(ctx context.Context, firstCookie uint64, requ
 			continue
 		}
 		childPath := filepath.Join(d.path, entry.Name())
-		node := nodeFor(childPath, fi)
+		node := nodeFor(childPath, d.root, fi)
 		var attributes virtual.Attributes
-		fillAttributes(fi, requested, &attributes)
-		var c virtual.DirectoryChild
-		if dir, ok := node.(virtual.Directory); ok {
-			c = c.FromDirectory(dir)
-		} else {
-			c = c.FromLeaf(node.(virtual.Leaf))
-		}
-		if !reporter.ReportEntry(cookie, name, c, &attributes) {
+		fillAttributes(fi, childPath, d.root, requested, &attributes)
+		if !reporter.ReportEntry(cookie, name, childOf(node), &attributes) {
 			break
 		}
 	}
@@ -213,8 +281,8 @@ func (d *directory) VirtualOpenChild(ctx context.Context, name virtual.Component
 	if shareAccess&virtual.ShareMaskWrite != 0 {
 		return nil, 0, ci, virtual.StatusErrROFS
 	}
-	leaf := &file{path: childPath}
-	fillAttributes(fi, requested, openedFileAttributes)
+	leaf := &file{path: childPath, root: d.root}
+	fillAttributes(fi, childPath, d.root, requested, openedFileAttributes)
 	return leaf, 0, ci, virtual.StatusOK
 }
 
@@ -246,6 +314,7 @@ func (d *directory) VirtualSymlink(ctx context.Context, pointedTo virtual.Parser
 
 type file struct {
 	path string
+	root string
 }
 
 func (f *file) VirtualGetAttributes(ctx context.Context, requested virtual.AttributesMask, attributes *virtual.Attributes) {
@@ -256,7 +325,7 @@ func (f *file) VirtualGetAttributes(ctx context.Context, requested virtual.Attri
 		}
 		return
 	}
-	fillAttributes(fi, requested, attributes)
+	fillAttributes(fi, f.path, f.root, requested, attributes)
 }
 
 func (f *file) VirtualSetAttributes(ctx context.Context, in *virtual.Attributes, requested virtual.AttributesMask, attributes *virtual.Attributes) virtual.Status {
@@ -299,7 +368,7 @@ func (f *file) VirtualOpenSelf(ctx context.Context, shareAccess virtual.ShareMas
 	if err != nil {
 		return virtual.StatusErrIO
 	}
-	fillAttributes(fi, requested, attributes)
+	fillAttributes(fi, f.path, f.root, requested, attributes)
 	return virtual.StatusOK
 }
 

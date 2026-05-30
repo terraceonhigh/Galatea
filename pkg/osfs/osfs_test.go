@@ -1,6 +1,7 @@
 package osfs
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -155,6 +156,72 @@ func TestReadPastEOF(t *testing.T) {
 	n, eof, st := leaf.VirtualRead(buf, 100)
 	if st != virtual.StatusOK || n != 0 || !eof {
 		t.Errorf("read past EOF = (n=%d, eof=%v, %s), want (0, true, OK)", n, eof, st)
+	}
+}
+
+// TestMandatoryAttributes guards the M-006 contract for osfs: the NFSv4 server
+// panics on any mandatory FATTR4 attribute the FSAL omits, and the real macOS
+// client requests a broad set. Assert osfs sets them all (root and a child).
+func TestMandatoryAttributes(t *testing.T) {
+	const mandatory = virtual.AttributesMaskChangeID | virtual.AttributesMaskFileHandle |
+		virtual.AttributesMaskFileType | virtual.AttributesMaskHasNamedAttributes |
+		virtual.AttributesMaskInodeNumber | virtual.AttributesMaskIsInNamedAttributeDirectory |
+		virtual.AttributesMaskLinkCount
+	root, err := Root(makeTree(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	var ra virtual.Attributes
+	root.VirtualGetAttributes(ctx, mandatory, &ra)
+	if missing := mandatory &^ ra.GetFieldsPresent(); missing != 0 {
+		t.Errorf("root missing mandatory attributes: mask %032b", missing)
+	}
+
+	var ca virtual.Attributes
+	if _, st := root.VirtualLookup(ctx, virtual.MustNewComponent("a.txt"), mandatory, &ca); st != virtual.StatusOK {
+		t.Fatalf("lookup a.txt: %s", st)
+	}
+	if missing := mandatory &^ ca.GetFieldsPresent(); missing != 0 {
+		t.Errorf("a.txt missing mandatory attributes: mask %032b", missing)
+	}
+}
+
+// TestHandleResolverRoundTrip obtains a child's handle and resolves it back to
+// a readable node — the GETFH/PUTFH round-trip the macOS client relies on —
+// and confirms an escaping handle is rejected.
+func TestHandleResolverRoundTrip(t *testing.T) {
+	root, err := Root(makeTree(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	resolver := NewHandleResolver(root)
+
+	var a virtual.Attributes
+	if _, st := root.VirtualLookup(ctx, virtual.MustNewComponent("a.txt"), virtual.AttributesMaskFileHandle, &a); st != virtual.StatusOK {
+		t.Fatalf("lookup a.txt: %s", st)
+	}
+	handle := a.GetFileHandle()
+
+	child, st := resolver(bytes.NewReader(handle))
+	if st != virtual.StatusOK {
+		t.Fatalf("resolve handle: %s", st)
+	}
+	_, leaf := child.GetPair()
+	if leaf == nil {
+		t.Fatal("resolved node is not a leaf")
+	}
+	buf := make([]byte, 8)
+	n, _, st := leaf.VirtualRead(buf, 0)
+	if st != virtual.StatusOK || string(buf[:n]) != "alpha" {
+		t.Errorf("read resolved handle = (%q, %s), want (alpha, OK)", string(buf[:n]), st)
+	}
+
+	// A handle that tries to climb out of the root must be rejected.
+	if _, st := resolver(bytes.NewReader([]byte("../escape"))); st == virtual.StatusOK {
+		t.Error("resolver accepted a root-escaping handle")
 	}
 }
 
