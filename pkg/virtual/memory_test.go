@@ -226,6 +226,43 @@ func TestWritableDirectory(t *testing.T) {
 	}
 }
 
+// TestRename covers VirtualRename within a directory and across directories
+// (the two-directory lock path).
+func TestRename(t *testing.T) {
+	ctx := context.Background()
+	root := NewWritableMemoryDirectory(PermissionsRead | PermissionsWrite | PermissionsExecute)
+	if _, _, _, st := root.VirtualOpenChild(ctx, MustNewComponent("a.txt"),
+		ShareMaskWrite, &Attributes{}, &OpenExistingOptions{}, 0, &Attributes{}); st != StatusOK {
+		t.Fatalf("create a.txt: %v", st)
+	}
+	sub, _, st := root.VirtualMkdir(MustNewComponent("sub"), 0, &Attributes{})
+	if st != StatusOK {
+		t.Fatalf("mkdir sub: %v", st)
+	}
+
+	// Rename within root: a.txt -> b.txt.
+	if _, _, st := root.VirtualRename(MustNewComponent("a.txt"), root, MustNewComponent("b.txt")); st != StatusOK {
+		t.Fatalf("rename within dir: %v", st)
+	}
+	if _, st := root.VirtualLookup(ctx, MustNewComponent("a.txt"), 0, &Attributes{}); st != StatusErrNoEnt {
+		t.Errorf("a.txt still present after rename")
+	}
+	if _, st := root.VirtualLookup(ctx, MustNewComponent("b.txt"), 0, &Attributes{}); st != StatusOK {
+		t.Errorf("b.txt missing after rename")
+	}
+
+	// Rename across directories: b.txt -> sub/c.txt.
+	if _, _, st := root.VirtualRename(MustNewComponent("b.txt"), sub, MustNewComponent("c.txt")); st != StatusOK {
+		t.Fatalf("rename across dirs: %v", st)
+	}
+	if _, st := root.VirtualLookup(ctx, MustNewComponent("b.txt"), 0, &Attributes{}); st != StatusErrNoEnt {
+		t.Errorf("b.txt still in root after cross-dir rename")
+	}
+	if _, st := sub.VirtualLookup(ctx, MustNewComponent("c.txt"), 0, &Attributes{}); st != StatusOK {
+		t.Errorf("sub/c.txt missing after cross-dir rename")
+	}
+}
+
 // TestFileWrite covers the R6a write path: a memory file's contents are
 // mutable via VirtualWrite (with zero-extension past EOF) and truncatable via
 // VirtualSetAttributes(size), and reads see the new bytes.

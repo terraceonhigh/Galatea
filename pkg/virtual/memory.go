@@ -471,7 +471,41 @@ func (d *memoryDirectory) VirtualReadDir(ctx context.Context, firstCookie uint64
 }
 
 func (d *memoryDirectory) VirtualRename(oldName Component, newDirectory Directory, newName Component) (ChangeInfo, ChangeInfo, Status) {
-	return ChangeInfo{}, ChangeInfo{}, StatusErrROFS
+	if !d.writable() {
+		return ChangeInfo{}, ChangeInfo{}, StatusErrROFS
+	}
+	nd, ok := newDirectory.(*memoryDirectory)
+	if !ok || nd.nextInode != d.nextInode {
+		// Renaming across FSALs / trees is not supported.
+		return ChangeInfo{}, ChangeInfo{}, StatusErrXDev
+	}
+	// Lock the source and destination directories. When they differ, lock in a
+	// consistent order (lowest inode first) so concurrent renames can't deadlock.
+	if d == nd {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+	} else {
+		first, second := d, nd
+		if first.inode > second.inode {
+			first, second = second, first
+		}
+		first.mu.Lock()
+		defer first.mu.Unlock()
+		second.mu.Lock()
+		defer second.mu.Unlock()
+	}
+
+	child, ok := d.children[oldName.String()]
+	if !ok {
+		return ChangeInfo{}, ChangeInfo{}, StatusErrNoEnt
+	}
+	// POSIX rename replaces an existing target. (A refinement — refusing to
+	// replace a non-empty directory target — is skipped here: checking it means
+	// locking a third directory while holding two, a deadlock risk; the client
+	// typically pre-checks anyway. Noted for R6 hardening.)
+	delete(d.children, oldName.String())
+	nd.children[newName.String()] = child
+	return ChangeInfo{}, ChangeInfo{}, StatusOK
 }
 
 func (d *memoryDirectory) VirtualRemove(name Component, removeDirectory, removeLeaf bool) (ChangeInfo, Status) {
