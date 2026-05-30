@@ -21,16 +21,30 @@ import (
 const usage = `galatea — navigate a directory through Galatea's FSAL
 
 usage:
-  galatea ls   <host-dir> [path]   list a directory
-  galatea stat <host-dir> [path]   show a node's attributes
-  galatea cat  <host-dir> <path>   print a file's contents
-  galatea tree <host-dir> [path]   print the tree recursively
+  galatea ls    <host-dir> [path]   list a directory
+  galatea stat  <host-dir> [path]   show a node's attributes
+  galatea cat   <host-dir> <path>   print a file's contents
+  galatea tree  <host-dir> [path]   print the tree recursively
+  galatea serve [addr]              serve a demo tree over NFSv4 (default 127.0.0.1:2049)
 
 <host-dir> is the directory Galatea exposes as the FSAL root.
 [path] is a slash-separated path *within* the FSAL (default: the root).
 `
 
 func main() {
+	// `serve` is the one subcommand that takes no <host-dir> (it exposes an
+	// in-memory demo tree — see serve.go); dispatch it before the arg checks.
+	if len(os.Args) >= 2 && os.Args[1] == "serve" {
+		addr := "127.0.0.1:2049"
+		if len(os.Args) > 2 {
+			addr = os.Args[2]
+		}
+		if err := doServe(addr); err != nil {
+			fatalf("%v", err)
+		}
+		return
+	}
+
 	if len(os.Args) < 3 {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)

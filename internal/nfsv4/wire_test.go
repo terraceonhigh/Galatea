@@ -131,6 +131,59 @@ func newTestProgram() nfsv4.Nfs4Program {
 	return NewReadOnlyProgram(root, virtual.NewMemoryHandleResolver(root))
 }
 
+// TestServeOverTCP exercises the exact path `galatea serve` uses: a real
+// net.Listen/Accept loop handing each connection to server.HandleConnection,
+// driven by a real TCP dial. (TestWireNull/Compound prove the same over a
+// net.Pipe; this proves the TCP listener/accept glue itself.)
+func TestServeOverTCP(t *testing.T) {
+	program := newTestProgram()
+	server := rpcserver.NewServer(
+		map[uint32]rpcserver.Service{
+			nfsv4.NFS4_PROGRAM_PROGRAM_NUMBER: nfsv4.NewNfs4ProgramService(program),
+		},
+		NewSystemAuthenticator(),
+	)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				_ = server.HandleConnection(conn, conn)
+				_ = conn.Close()
+			}()
+		}
+	}()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.Write(encodeCall(t, 1, 0 /* NULL */, authsysCred(t), nil)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var marker [4]byte
+	if _, err := io.ReadFull(conn, marker[:]); err != nil {
+		t.Fatalf("read record marker: %v", err)
+	}
+	n := binary.BigEndian.Uint32(marker[:]) &^ 0x80000000
+	payload := make([]byte, n)
+	if _, err := io.ReadFull(conn, payload); err != nil {
+		t.Fatalf("read reply payload: %v", err)
+	}
+	if rest := decodeAcceptedReply(t, payload); len(rest) != 0 {
+		t.Errorf("NULL reply carried %d trailing bytes, want 0", len(rest))
+	}
+}
+
 func TestWireNull(t *testing.T) {
 	program := newTestProgram()
 	cred := authsysCred(t)
