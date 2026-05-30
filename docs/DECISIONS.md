@@ -872,3 +872,56 @@ slow READ; a real transfer is many sequential slow reads — also fine (each is 
 own RPC), but sustained multi-GB endurance is R7, not measured here. (3) The slow
 delay is artificial (a `time.Sleep`), faithfully modelling a slow backend fetch;
 the real MTP backend's latency profile is Comprador's to characterise.
+
+---
+
+## DEC-020 — R7 (sustained transfer half): a 1 GB write→server→remount→read round-trips byte-identical; AC2 met
+
+**Date:** 2026-05-29 · **Status:** accepted (measured live) · **Advances:** the R7
+gate (AC2 sustained-transfer; AC6 lifecycle partly — see caveats).
+
+**The question.** R1/DEC-019 settled the *single* slow READ. AC2 asks the
+complementary question: does a *sustained, large-volume* transfer complete over
+the live mount without timeout — and, just as important, without corruption? A
+filesystem that finishes fast but mangles a byte is worse than one that stalls.
+
+**The measurement.** Against the writable in-memory demo (`galatea serve
+127.0.0.1:12062`), three round-trips, each: generate random source → `dd` it onto
+the mount → `sync` → **`umount` + fresh `mount_nfs`** (drops the client page cache
+so the read-back is forced from the server, not RAM) → `cmp` source against the
+mounted file.
+
+| size  | write (incl. sync) | server-side read-back (post-remount) | `cmp` |
+|-------|--------------------|--------------------------------------|-------|
+| 200 MB | <1 s (client-buffered) | (cache-served first pass) | n/a |
+| 256 MB | <1 s | ~1 s (~256 MB/s from server) | **identical** |
+| 1 GB  | ~6 s | **16 s (~64 MB/s from server, no cache)** | **identical** |
+
+The 1 GB case is the decisive one: `cmp /tmp/src.bin <mnt>/big1g.bin` returned
+exit 0 — 1 073 741 824 bytes byte-for-byte identical across a full
+write→server-store→flush→remount→server-read cycle. No timeout, no
+retransmit storm, no corruption at GB scale.
+
+**Why the remount matters.** Without it, `dd`'s write returns in <1 s because the
+macOS NFS client buffers writes and would serve the read-back from its own page
+cache — measuring the client's RAM, not our server. `umount` forces the dirty
+pages to flush to the server (proving the server *received and stored* all 1 GB),
+and the fresh mount guarantees the `cmp` read pulls every byte back *from the
+server* over the wire. The 16 s read at ~64 MB/s is genuine server-side READ
+throughput.
+
+**What it settles.** AC2 ("sustained multi-GB read+write completes without
+timeout") holds, with byte-exact integrity as a bonus the criterion didn't even
+demand. The lifted server, the writable in-memory FSAL, and the macOS client
+together move a GB cleanly in both directions.
+
+**Caveats / calibration.** (1) The multi-GB *ceiling* here is the demo FSAL's
+naive in-RAM `[]byte` storage (amortised-doubling `append`, so writes are O(n)
+but a doubling spikes the heap to ~2× transiently) — **not** the protocol. True
+unbounded endurance belongs against a streaming/disk backend (osfs-write, or
+Comprador's MTP FSAL), not this proving ground. (2) AC6's *eject* half is
+exercised — every round-trip did a clean `umount`+remount under data load, data
+persisting server-side across the client's mount lifecycle — but **sleep-wake**
+remains Architect-gated (not headless-doable), as does the signal-driven server
+shutdown path. (3) Throughput (64–256 MB/s) is uncharacterised beyond "ample for
+a Finder data volume"; not a tuning target at Milestone A.

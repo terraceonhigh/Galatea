@@ -66,11 +66,17 @@ FSAL read-write.
 **Done when:** AC3 holds — create/write/mkdir/rename/remove/truncate work through
 the mount; the `pjdfstest` write subset passes.
 
-### R7 — Endurance & lifecycle
+### R7 — Endurance & lifecycle  🟡 (AC2 ✅ done 2026-05-29; AC6 partial)
 
 Sustained multi-GB read+write; eject/sleep-wake/signal handling.
 **Done when:** AC2 and AC6 hold — the sustained-transfer test completes without
 timeout and the lifecycle script passes.
+- **AC2 ✅** — a 1 GB random payload written to the mount, flushed, remounted (to
+  defeat the client cache), and read back from the server is **byte-for-byte
+  identical** (`cmp` exit 0); no timeout, no corruption at GB scale. DEC-020.
+- **AC6 🟡** — clean `umount`+remount under data load is exercised repeatedly
+  (eject half); **sleep-wake and signal-driven shutdown remain Architect-gated**
+  (not headless-doable).
 
 ### R8 — Milestone A acceptance
 

@@ -11,9 +11,11 @@ is a working read-WRITE NFS filesystem on macOS**, live, headless, no root:
 read/write/append/truncate + create/mkdir/rm/rmdir/**rename** all verified over a
 real mount (`go test -race` clean). **R1 (the founding substrate bet) is also
 validated** — a 2m10s READ completed over NFSv4 where NFSv3 would have timed out.
-The central thesis is proven and exceeded. Cursor: R5 (pjdfstest conformance) /
-R7 (endurance) / osfs-write; Mknod/Link/Symlink are niche follow-ups. The Finder
-GUI screenshot is the only Architect-gated bit.)
+**R7's AC2 (sustained transfer) is validated too** — a 1 GB payload round-trips
+write→server→remount→read byte-for-byte identical. The central thesis is proven
+and exceeded. Cursor: R5 (pjdfstest conformance) / osfs-write; Mknod/Link/Symlink
+are niche follow-ups. Architect-gated remainders: the Finder GUI screenshot and
+R7's sleep-wake half.)
 **Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
 filesystem of our own).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
@@ -80,15 +82,23 @@ pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
   (applied the `requested` *return* mask instead of what `in` carried) — found by
   an env-gated COMPOUND op-trace (`GALATEA_TRACE=1`) of the live client, fixed,
   and the test strengthened to catch it.
+- **R7 (AC2 — sustained transfer) — VALIDATED.** A 1 GB random payload `dd`'d onto
+  the writable mount, `sync`'d, then `umount`+freshly-`mount_nfs`'d (to defeat the
+  client page cache) and `cmp`'d against its source: **byte-for-byte identical**,
+  exit 0. The post-remount read pulled the full 1 GB back *from the server* in 16 s
+  (~64 MB/s, genuine server-side READ). No timeout, no corruption at GB scale; 256 MB
+  passed identically too. The multi-GB ceiling is the demo FSAL's in-RAM `[]byte`,
+  not the protocol. DEC-020. (AC6's eject half is exercised by the repeated clean
+  remounts; **sleep-wake + signal-shutdown stay Architect-gated**.)
 
 ## Cursor — next increment
 
-**R5 / R6 — conformance and the write path** (Milestone A's remaining gates).
-([`ROADMAP.md`](ROADMAP.md))
+**R5 — conformance** (Milestone A's main remaining gate; the write path R6 and
+R7's sustained-transfer half AC2 are banked). ([`ROADMAP.md`](ROADMAP.md))
 
-R0→R4 read-only is done and live (see Done above + DEC-018): Galatea mounts on
-macOS, headless, no root, and serves a browsable/readable tree. What remains for
-Milestone A:
+R0→R4 read-only is done and live (DEC-018), the write path R6 is live and
+race-clean, and R7's AC2 is validated to 1 GB byte-identical (DEC-020). What
+remains for Milestone A:
 
 - **R5 — read-only conformance.** Run the read-applicable `pjdfstest` subset and a
   `pynfs` NFSv4.0 read subset against a live `galatea serve` mount; enumerate
@@ -115,16 +125,19 @@ Milestone A:
   over the mount, clean `umount`. (Caveat: path handles are bounded by NFS4_FHSIZE
   ≈128 B; deeply-nested paths would need an inode/hash scheme — future.)
 
-Pick R5 or R6 next (R5 hardens what works; R6 extends toward read-write, the
-Milestone-A goal). The **one genuinely-deferred item** is a human-eyes Finder GUI
-screenshot (the Architect's non-headless Mac); it gates nothing — `ls`/`mount`/`df`
-verify the mount programmatically — but it's the satisfying visual confirmation.
+**R5 is the main remaining headless gate** — it hardens the read+write paths that
+already work live (R6) against an external conformance suite. After R5: osfs-write
+(mutating the real disk) and the niche Mknod/Link/Symlink. **Architect-gated
+deferrals** (none block Milestone A's substance): a human-eyes Finder GUI
+screenshot, and R7's sleep-wake/signal lifecycle half — `ls`/`mount`/`df` verify
+the mount programmatically, and AC2 endurance is already measured (DEC-020).
 
 > **⚠ Do NOT vendor `util` wholesale** — jsonnet/protobuf/grpc/prometheus/uuid;
 > vendor by symbol. (Retained; applies to any future bb-storage grab, e.g. R6.)
 
-Loop step to resume at: **2 (Scope)** for R5 or R6 — choose the gate, restate its
-"Done when", then investigate. R0→R4 read-only is banked and green.
+Loop step to resume at: **2 (Scope)** for R5 — restate its "Done when", then
+investigate `references/pjdfstest` (the BSD-2 C suite) against a live `galatea
+serve` mount. R0→R7-AC2 is banked and green.
 
 > **Tooling gotchas this run:** (1) `cd` in Bash *persists* the working dir across
 > calls and breaks later relative-path commands — use absolute paths / `git -C`.
