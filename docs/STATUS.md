@@ -6,25 +6,29 @@ loop updates. If this file and the code disagree, the code is truth — fix this
 
 ---
 
-**Updated:** 2026-05-29 (autonomous run: **R0→R4 + R6a + most of R6b DONE — Galatea
-is a working read-WRITE NFS filesystem on macOS**, live, headless, no root:
-read/write/append/truncate + create/mkdir/rm/rmdir/**rename** all verified over a
-real mount (`go test -race` clean). **R1 (the founding substrate bet) is also
-validated** — a 2m10s READ completed over NFSv4 where NFSv3 would have timed out.
-**R7's AC2 (sustained transfer) is validated** — a 1 GB payload round-trips
-write→server→remount→read byte-for-byte identical. **R5's headless half is done
-too** — `make test-conformance` runs a 10-test in-language protocol-conformance
-suite (read path + stateless write + the full stateful OPEN→WRITE→CLOSE dance),
-`-race`-clean. AC6 signal handling is also done (graceful ctx-cancel shutdown).
-The central thesis is proven and exceeded. **The headless-tractable AC work is now
-essentially complete.** Remaining work splits two ways: **gated** (needs an
-environment I lack) — pjdfstest (Linux CI), pynfs-proper (one `pip install ply`),
-R7 sleep-wake + Finder screenshot (a non-headless Mac); and **deferred but
-headless-doable** (a deliberate later call, not blocked) — osfs-write (real-disk,
-riskier; AC3 already met by the in-memory backend) and Mknod/Link/Symlink (niche).
-Full receipts in [`ACCEPTANCE.md`](ACCEPTANCE.md).)
-**Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
-filesystem of our own).
+**Updated:** 2026-05-30 (**Milestone A is banked, and GOAL B — the libfuse
+maneuver — is proven across read, write, and the real-tool ABI.** Two arcs since
+the last entry:
+
+1. **Milestone A landed and shipped.** R0→R8 done; AC1 **human-confirmed live in
+   Finder** (the Architect drove the writable demo through the GUI); tagged
+   **`v0.1.0-alpha`** (pre-release; AC4/pynfs are CI-gated — see `ACCEPTANCE.md`);
+   and **published open-source at github.com/terraceonhigh/Galatea** (GPLv3, a
+   curated snapshot — `atelier/`+`Correspondance/` stayed private). Mercer and
+   Minerve were notified (Minerve's letter delivered to Stepford). A sibling
+   project **Onfim** (`~/Labs/Onfim`) was bootstrapped for the FSKit+Rust-NTFS
+   "ruin Paragon" cathedral (see its charge).
+
+2. **GOAL B — `shim/libfuse/` — the FUSE-T wedge, proven (R9).** A drop-in
+   `libfuse.dylib` over Galatea's server. Read (unmodified `hello.c` mounts), write
+   (a passthrough mounts read-write, create/write/mkdir/rename/rm land in the
+   backing store), and the **fuse_opt ABI layer** (the `fuse_opt_*` family +
+   `fuse_get_context` + `fuse_version`) — all live, all committed. `fixture/optfs.c`
+   proves the exact sshfs-class call pattern works through Galatea. See
+   `docs/GOAL-B-libfuse.md` and ROADMAP R9.)
+**Goal:** **GOAL B (R9) — the libfuse maneuver.** Milestone A
+([`GOAL.md`](GOAL.md)) is complete and banked. The active cursor is the libfuse
+shim's *marquee* — see below.
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
 pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
 `MISTAKES.md` M-003.)
@@ -109,13 +113,37 @@ pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
 
 ## Cursor — next increment
 
-**The headless-tractable AC work is complete.** R0→R4 (live read mount), R6 (live
-write path), R1 (substrate bet), R7-AC2 (1 GB sustained transfer), R5-headless
-(protocol-conformance suite), and AC6 signal handling (graceful ctx-cancel
-shutdown) are all banked and green. This is the honest "verifiably hard to surmount
-headless" boundary the governing goal asked for, not a voluntary stop — but note
-the distinction below between *gated* (can't, headless) and *deferred* (can, but a
-deliberate later call). ([`ROADMAP.md`](ROADMAP.md), [`ACCEPTANCE.md`](ACCEPTANCE.md))
+**The active increment is GOAL B's marquee — a *famous-named* FUSE tool running on
+the shim.** The libfuse maneuver itself is proven (read + write + the fuse_opt ABI
+layer; `shim/libfuse/`, ROADMAP R9): `fixture/optfs.c` is a from-source FUSE program
+using the full sshfs-class call pattern (`fuse_opt_parse` + `fuse_main(user_data)` +
+`fuse_get_context()->private_data`), live on Galatea. What's left is recognizability,
+and the chosen vehicle is **rclone**.
+
+**The rclone plan — start here:**
+1. **Audit what cgofuse needs (don't guess).** `rclone mount` uses
+   `github.com/winfsp/cgofuse`, which **dlopen**s the FUSE library at runtime — so
+   no relink; we can point it at our dylib. But it likely uses the *lower-level* API
+   (`fuse_new`/`fuse_mount`/`fuse_loop`/`fuse_destroy`/`fuse_unmount`/
+   `fuse_set_signal_handlers`/`fuse_session_*`), which the shim does **not** export
+   yet (we have `fuse_main_real` + `fuse_opt_*` + `fuse_get_context` + `fuse_version`
+   — `nm -gU` the dylib to confirm). Clone cgofuse (network is up) and read its
+   `dlsym` list (`host_cgo.go`) — that is the exact symbol set to implement.
+2. **Implement the missing session-style API** over the server: refactor so both
+   `fuse_main_real` and cgofuse build on `fuse_new`/`fuse_mount`/`fuse_loop`
+   (listen + `mount_nfs` + serve), plus `fuse_unmount`/`fuse_destroy` and
+   signal-handler stubs. Keep the de-risk discipline: a translation test first.
+3. **Point cgofuse at our dylib** via its lib-search override (env / a controlled
+   path) — do **not** replace the system `/usr/local/lib/libfuse.dylib`.
+4. **Run `rclone mount`** of a local/memory remote; `ls`/`cat`/write through it.
+
+**Walls already mapped (don't re-discover):** modern `sshfs` is FUSE3 (shim is 2.9);
+FUSE-2.x tools (`ntfs-3g`, old sshfs, `bindfs`) are autotools projects and
+`autoconf`/`automake`/`meson` aren't installed. rclone/cgofuse sidesteps both
+(runtime dlopen, no autotools) — hence the choice.
+
+The Milestone-A *gated/deferred* items below are real but **secondary** to this
+active R9 cursor. ([`ROADMAP.md`](ROADMAP.md) R9, [`GOAL-B-libfuse.md`](GOAL-B-libfuse.md))
 
 **Gated — needs a gate opened (environment/permission I lack):**
 
@@ -152,15 +180,14 @@ deliberate later call). ([`ROADMAP.md`](ROADMAP.md), [`ACCEPTANCE.md`](ACCEPTANC
 > **⚠ Do NOT vendor `util` wholesale** — jsonnet/protobuf/grpc/prometheus/uuid;
 > vendor by symbol. (Retained; applies to any future bb-storage grab, e.g. R6.)
 
-Loop step to resume at: **the headless loop has reached its boundary.** R0→R6,
-R1, R7-AC2, and R5-headless are banked and green. The next increments need a gate
-to open (a Linux CI runner for pjdfstest, a one-line `pip install ply` for pynfs,
-a non-headless Mac for sleep-wake/Finder, or a deliberate decision to start
-osfs-write). Resume at **step 2 (Scope)** for whichever gate the Architect opens
-next. The R8 acceptance checklist is **already tallied** in
-[`ACCEPTANCE.md`](ACCEPTANCE.md) (AC2/AC3/AC7 ✅; AC1/AC5/AC6 🟡; AC4 ⛔) — read it
-first to see exactly what each remaining gate needs and what a `v0.1` tag is
-waiting on.
+Loop step to resume at: **step 2 (Scope) for the rclone marquee** — begin with
+step 1 above (audit cgofuse's `dlsym` symbol set), then implement the session-style
+API the shim still lacks. Milestone A is banked and tagged (`v0.1.0-alpha`,
+public); its remaining gated items (pjdfstest on Linux CI, pynfs `pip install ply`,
+sleep-wake/Finder on a non-headless Mac) and deferred items (osfs-write,
+Mknod/Link/Symlink) are tallied in [`ACCEPTANCE.md`](ACCEPTANCE.md) — pick them up
+only when their gate opens or as a deliberate side-loop; the rclone marquee is the
+active line.
 
 > **Tooling gotchas this run:** (1) `cd` in Bash *persists* the working dir across
 > calls and breaks later relative-path commands — use absolute paths / `git -C`.
