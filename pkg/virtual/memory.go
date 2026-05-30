@@ -250,6 +250,6 @@ func (d *memoryDirectory) VirtualRemove(name Component, removeDirectory, removeL
 	return ChangeInfo{}, StatusErrROFS
 }
 
-func (d *memoryDirectory) VirtualSymlink(ctx context.Context, pointedTo string, linkName Component, requested AttributesMask, attributes *Attributes) (Leaf, ChangeInfo, Status) {
+func (d *memoryDirectory) VirtualSymlink(ctx context.Context, pointedTo Parser, linkName Component, requested AttributesMask, attributes *Attributes) (Leaf, ChangeInfo, Status) {
 	return nil, ChangeInfo{}, StatusErrROFS
 }

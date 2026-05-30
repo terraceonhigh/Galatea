@@ -60,7 +60,7 @@ type Directory interface {
 	VirtualRemove(name Component, removeDirectory, removeLeaf bool) (ChangeInfo, Status)
 	// VirtualSymlink creates a symbolic link within this directory.
 	// pointedTo is the link's target path.
-	VirtualSymlink(ctx context.Context, pointedTo string, linkName Component, requested AttributesMask, attributes *Attributes) (Leaf, ChangeInfo, Status)
+	VirtualSymlink(ctx context.Context, pointedTo Parser, linkName Component, requested AttributesMask, attributes *Attributes) (Leaf, ChangeInfo, Status)
 }
 
 const (

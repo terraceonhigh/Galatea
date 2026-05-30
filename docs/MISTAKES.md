@@ -96,3 +96,46 @@ write "X is impossible/blocked," spend the two minutes to falsify it first.
 there's no server to mount yet (that's R3). What's established is that the mount
 *path is open and unprivileged*, not that the full mount + Finder display works.
 That gets proven at R4, once the server exists.
+
+---
+
+## M-005 — A latent deadlock rode in with the lifted server; `go vet` caught it, not a test
+
+**Date:** 2026-05-29 · **Cost:** none (caught at the R2d vet gate, before any
+mount) · **Whose:** bb-rex's, not the lift's.
+
+**The bug.** `nfs41_program.go` line ~701, in the NFSv4.1 SEQUENCE slot
+serialization: when a slot already has a request in flight, the code makes a
+result channel `ch := make(chan compoundResult, 1)`, then —
+
+```go
+slot.currentSequenceWaiters = append(slot.currentSequenceWaiters)   // no value!
+p.leave()
+return <-ch
+```
+
+The `append` has **no value** — a no-op. `ch` is never registered in the waiter
+slice, so when the in-flight request completes and broadcasts results to
+`currentSequenceWaiters`, this goroutine isn't in the list and blocks **forever**
+on `<-ch`. A concurrent same-slot 4.1 SEQUENCE would hang. Fixed to
+`append(slot.currentSequenceWaiters, ch)`.
+
+**Why it matters / the lesson.** Two lessons. (1) **Lifted code is not
+automatically correct code** — "lift, don't write" buys a tested implementation,
+but bb-rex's own gomock tests evidently never exercised concurrent same-slot
+SEQUENCE, so the bug shipped. Reading the lift's vet output is part of trusting
+it. (2) **`go vet` is a cheap, real verification step, not a formality** — it
+found, for free, a concurrency deadlock that no amount of single-threaded testing
+would surface. The development loop's "vet clean" gate earned its place here.
+
+**Cheaper path:** there wasn't a cheaper one than what happened — vet at the gate
+is exactly the cheap test. The note for the future: when lifting, *run vet and
+read every finding*; a flagged "append with no values" or "lock by value" in
+someone else's code may be a real latent bug, not noise to silence.
+
+**Calibration:** the fix is correct by construction (the completion side at
+"Broadcast result to parallel calls with the same sequence ID" drains
+`currentSequenceWaiters` and sends to each), but it is **unexercised** — Galatea
+has no concurrent-SEQUENCE test yet, and the 4.1 path isn't on the read-first
+critical path to a mount. Flagged for a regression test when 4.1 SEQUENCE
+concurrency is actually wired (R3+).

@@ -238,7 +238,7 @@ func (d *directory) VirtualRemove(name virtual.Component, removeDirectory, remov
 	return virtual.ChangeInfo{}, virtual.StatusErrROFS
 }
 
-func (d *directory) VirtualSymlink(ctx context.Context, pointedTo string, linkName virtual.Component, requested virtual.AttributesMask, attributes *virtual.Attributes) (virtual.Leaf, virtual.ChangeInfo, virtual.Status) {
+func (d *directory) VirtualSymlink(ctx context.Context, pointedTo virtual.Parser, linkName virtual.Component, requested virtual.AttributesMask, attributes *virtual.Attributes) (virtual.Leaf, virtual.ChangeInfo, virtual.Status) {
 	return nil, virtual.ChangeInfo{}, virtual.StatusErrROFS
 }
 

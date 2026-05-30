@@ -26,6 +26,8 @@ type (
 	// Parser parses a pathname string into a sequence of components. A
 	// symbolic-link target takes this type.
 	Parser = path.Parser
+	// Format parses/stringifies pathnames in a particular OS convention.
+	Format = path.Format
 	// FileType enumerates the type of a file.
 	FileType = filesystem.FileType
 	// RegionType distinguishes data from holes for sparse-file seeking.
@@ -62,4 +64,7 @@ var (
 	MustNewComponent = path.MustNewComponent
 	// NewFileInfo constructs a FileInfo.
 	NewFileInfo = filesystem.NewFileInfo
+	// UNIXFormat parses/stringifies UNIX-style ("/"-separated) pathnames. A
+	// backend builds a symlink target with UNIXFormat.NewParser(target).
+	UNIXFormat = path.UNIXFormat
 )

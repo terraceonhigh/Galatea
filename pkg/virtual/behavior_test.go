@@ -117,7 +117,7 @@ func TestEveryDirectoryMutationRejected(t *testing.T) {
 	if _, _, st := root.VirtualMknod(ctx, name, FileTypeFIFO, 0, &Attributes{}); st != StatusErrROFS {
 		t.Errorf("VirtualMknod = %v, want ROFS", st)
 	}
-	if _, _, st := root.VirtualSymlink(ctx, "/target", name, 0, &Attributes{}); st != StatusErrROFS {
+	if _, _, st := root.VirtualSymlink(ctx, UNIXFormat.NewParser("/target"), name, 0, &Attributes{}); st != StatusErrROFS {
 		t.Errorf("VirtualSymlink = %v, want ROFS", st)
 	}
 	if _, _, st := root.VirtualRename(MustNewComponent("hello.txt"), root, name); st != StatusErrROFS {

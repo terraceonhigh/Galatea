@@ -6,8 +6,9 @@ loop updates. If this file and the code disagree, the code is truth — fix this
 
 ---
 
-**Updated:** 2026-05-29 (autonomous run: R1 gated; R2a + serving-foundation +
-**R2b + R2c** done; (A) confirmed reachable; cursor at R2d — the server lift)
+**Updated:** 2026-05-29 (autonomous run: R1 gated; **R2 complete** — bb-rex NFSv4
+server lifted, de-coupled (zero buildbarn imports), green; cursor at R3 — serve
+on a socket)
 **Goal:** [`GOAL.md`](GOAL.md) — Milestone A (read-write, Finder-visible
 filesystem of our own).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
@@ -36,37 +37,48 @@ pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
   `Attributes.symlinkTarget` reverted `string`→`path.Parser`. Aliases → the server
   (R2d) meets the interface with zero type conversion; ~170 use-sites untouched.
   R0 suite re-verified green. DEC-015.
+- **R2d — the NFSv4 server lifted.** bb-rex's `nfs40/nfs41_program`,
+  `opened_files_pool`, `minor_version_fallback` copied to **`internal/nfsv4`**;
+  imports rewritten (`virtual`→`pkg/virtual`, bb-storage→`internal/bb`,
+  go-xdr→`internal/xdr`); `system_authenticator` rewritten to localhost AUTH_SYS;
+  prometheus stripped; `metrics_program` dropped. `pkg/virtual` gained the symbols
+  the lift actually needed (`ByteRangeLock*`, `HandleResolver`, `Format`/
+  `UNIXFormat`, `VirtualSymlink`→`Parser`). **`go list` shows zero buildbarn
+  imports.** A latent upstream 4.1-SEQUENCE deadlock was caught by `go vet` and
+  fixed (M-005). DEC-016, `internal/nfsv4/VENDOR.md`. *Compiles + green; behaviour
+  (a COMPOUND) is R3.* **R2 is structurally complete.**
 
 ## Cursor — next increment
 
-**R2d — lift bb-rex's NFSv4 server into Galatea (the heart of R2).**
-([`ROADMAP.md`](ROADMAP.md) R2)
+**R3 — serve NFSv4 on a loopback socket.** ([`ROADMAP.md`](ROADMAP.md) R3)
 
-> **Done when:** the lifted server package compiles in-tree against `pkg/virtual`
-> + the vendored `internal/bb` / `internal/xdr`, with `go build/vet/test/fmt
-> ./...` green and `go list` showing no `buildbarn/*` import. (bb-rex's gomock
-> test mountain is out of scope — DEC-011; a Galatea smoke COMPOUND test is the
-> behavioural gate, folded into R3.)
+> **Done when:** `pynfs` (or a minimal client) completes a NULL call and a basic
+> COMPOUND (PUTROOTFH + GETATTR) against the running server over a loopback port.
+> This is also where the lifted server first *executes*, satisfying the re-scoped
+> R2 behavioural gate (a smoke COMPOUND vs the in-memory FSAL — DEC-011/016).
 
-R2a/R2b/R2c are done: the wire codec (`internal/xdr`), the leaf types
-(`internal/bb`), and the interface (`pkg/virtual`) are all in place and on the
-*same* types the server speaks — so the lift is import-rewrite + shim, not
-redesign. Remaining work for R2d, from the coupling map:
+Everything the server needs to run now exists in-tree and green: the COMPOUND
+engine (`internal/nfsv4`), the wire codec + ONC-RPC record-marking loop
+(`internal/xdr/pkg/{runtime,protocols,rpcserver}`), the localhost AUTH_SYS
+authenticator, and two backends to serve (`pkg/virtual` in-memory, `pkg/osfs`).
 
-- **Copy** `nfs40_program.go`, `nfs41_program.go`, `opened_files_pool.go`,
-  `minor_version_fallback_program.go`, `metrics_program.go` from bb-rex's
-  `pkg/filesystem/virtual/nfsv4/` into Galatea (likely `internal/nfsv4/` or
-  `pkg/nfsv4/` — decide at lift). Rewrite imports: `bb-rex/.../virtual` →
-  `pkg/virtual`; `bb-storage/pkg/filesystem{,/path}` → `internal/bb/...`;
-  `go-xdr/...` → `internal/xdr/...`.
-- **Shim** `clock` (Clock iface + Now) and `random` (SingleThreadedGenerator) —
-  tiny, stdlib-backed (vendor by symbol, NOT `util` wholesale — see ⚠ below).
-- **Strip** `metrics_program.go`'s prometheus to no-ops.
-- **Replace** `system_authenticator.go` with a trivial localhost AUTH_SYS
-  authenticator (no auth/jmespath/eviction).
-- **Watch for** the type fork being truly closed (it should be — R2c aligned the
-  types) and any *other* bb-storage symbol the server pulls that the floor missed
-  (the R2b `x/sys/unix` surprise says: trust `go build`, not the map).
+Remaining work for R3:
+- Add a `cmd/galatea serve` subcommand (or a `pkg`-level `Serve`): build an
+  `internal/nfsv4` program over a chosen backend, register it as RPC program
+  100003 (NFS) on the `rpcserver` loop, listen on a loopback TCP port.
+- Drive it: a NULL call first, then PUTROOTFH+GETATTR. In-memory FSAL for the
+  deterministic smoke test; `osfs` for a real tree. A Galatea-authored test
+  suffices; `pynfs` (in `references/`) is the conformance option.
+- Expect macOS-client-quirk discovery to begin here — what COMPOUND sequence the
+  real client sends at mount. Journal findings (R5 leaking early).
+
+> **⚠ Do NOT vendor `util` wholesale** — jsonnet/protobuf/grpc/prometheus/uuid.
+> (Retained from R2; applies to any future bb-storage symbol grab.)
+
+**After R3:** R4 — `open nfs://localhost:PORT/` to mount read-first. The first
+privileged/GUI-adjacent step: M-004 shows the mount path is open without root, but
+confirming Finder visibility needs the Architect's eyes on a non-headless Mac —
+**the likely first genuinely-blocking wall for a headless agent.**
 
 The server's `virtual.*` surface is entirely interface/attributes/status/
 permissions — **all in `pkg/virtual`**, no handle-allocator/CAS types (a big R2d
@@ -82,9 +94,9 @@ governs R2d's `clock`/`random` shims:
 **After R2:** R3 — wire `cmd/galatea serve` (rpcserver loop, NFS prog 100003) + a
 smoke COMPOUND test; then R4 — `open nfs://localhost:PORT/` to mount read-first.
 
-Loop step to resume at: **4 (Implement)** for R2d — lift the bb-rex server files
-into the tree and rewrite imports onto `pkg/virtual` + `internal/{bb,xdr}`.
-(R2a/R2b/R2c done — DEC-010/014/015.)
+Loop step to resume at: **2 (Scope)** for R3 — design `cmd/galatea serve` (RPC
+prog 100003 on the `rpcserver` loop) + a COMPOUND smoke test. (R2 complete —
+server lifted & de-coupled, DEC-016.)
 
 > **Tooling gotchas this run:** (1) `cd` in Bash *persists* the working dir across
 > calls and breaks later relative-path commands — use absolute paths / `git -C`.

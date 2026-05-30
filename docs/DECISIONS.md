@@ -620,3 +620,65 @@ stripped, a localhost `system_authenticator`) into Galatea, rewrite imports onto
 `pkg/virtual` + the vendored `internal/bb`/`internal/xdr`, shim `clock`/`random`,
 and compile. Then a Galatea smoke COMPOUND test (PUTROOTFH+GETATTR) against the
 in-memory FSAL closes the re-scoped R2 gate.
+
+---
+
+## DEC-016 — R2d executed: bb-rex's NFSv4 server lifted into `internal/nfsv4`, de-coupled and green
+
+**Date:** 2026-05-29 · **Status:** accepted (the heart of Phase 1 / R2)
+
+**Decision.** bb-rex's `pkg/filesystem/virtual/nfsv4` server is lifted into Galatea
+at **`internal/nfsv4`** (package `nfsv4`; `internal/` because it is the engine
+behind the eventual `galatea.Mount`, not public API — the public surface stays
+`pkg/virtual`). The lift compiles, vets, tests, and `go fmt`s clean, and
+`go list -deps ./internal/nfsv4 | grep buildbarn` returns **nothing**: the server
+is fully de-coupled from buildbarn. Full provenance and the per-file modification
+log live in `internal/nfsv4/VENDOR.md`.
+
+**How (the mechanics).**
+- Copied `nfs40_program.go`, `nfs41_program.go`, `opened_files_pool.go`,
+  `minor_version_fallback_program.go`; rewrote import paths with a throwaway
+  `//go:build ignore` `go run` rewriter (bb-rex `virtual` → `pkg/virtual`;
+  bb-storage `{filesystem,path,clock,random}` → `internal/bb/...`; go-xdr →
+  `internal/xdr/...`). DEC-015's aliases made `virtual.*` resolve with zero
+  conversion, as designed.
+- Rewrote `system_authenticator.go` to a minimal localhost AUTH_SYS authenticator
+  (drops `auth`/`jmespath`/`eviction` — DEC-011).
+- Stripped `nfs40_program.go`'s Prometheus counters; did **not** lift
+  `metrics_program.go` (the Prometheus decorator).
+
+**What the build taught us (the "trust `go build`, not the map" surprises).** The
+coupling map said the server's `virtual.*` surface was "entirely
+interface/attributes/status/permissions — all in `pkg/virtual`." The compiler
+disagreed: the hand-cut `pkg/virtual` was **missing** `HandleResolver` and the
+`ByteRangeLock{,Set,Type}` family, and `VirtualSymlink`/`Attributes.symlinkTarget`
+were still the DEC-005 `string` (R2c reverted only the attribute, not the method).
+Added to `pkg/virtual`: `byte_range_lock_set.go` (lifted verbatim, import-free),
+`handle.go` (`HandleResolver`), `Format`/`UNIXFormat` re-exports; reverted
+`VirtualSymlink`'s `pointedTo` to `Parser` (rippling to `pkg/osfs` + the in-memory
+FSAL + the behaviour test). None of this was predicted by the map — the map
+measured *imports*, not *every referenced symbol*. Lesson logged for R-future:
+the symbol surface of a lift is only known once it compiles.
+
+**A real upstream bug, fixed.** `go vet` flagged an empty `append` in
+`nfs41_program.go`'s 4.1 SEQUENCE slot logic — bb-rex's own latent deadlock (a
+waiter channel never registered). Fixed to `append(..., ch)`; receipt in
+`MISTAKES.md` M-005. Also two `NfsV4Nfsproc4Null` value receivers → pointer
+(vet: "passes lock by value").
+
+**The R2 gate (re-scoped by DEC-011) is met:** the lifted server compiles,
+`go build/vet/test/fmt ./...` are green, and the closure is buildbarn-free. The
+*behavioural* gate — a smoke COMPOUND (PUTROOTFH+GETATTR) against the in-memory
+FSAL — is **not** in this increment; per DEC-011 it folds into R3, where the RPC
+serving loop exists to drive a COMPOUND. So R2 is "structurally done, behaviour
+pending R3."
+
+**What would change this.** If R3's first COMPOUND reveals the server needs a
+`virtual` symbol still missing, add it (same pattern). If the `internal/nfsv4`
+location proves wrong when `galatea.Mount` is designed (Phase 3), move it — cheap,
+no external importers yet.
+
+**Next:** R3 — wire `cmd/galatea serve` (the vendored `internal/xdr/pkg/rpcserver`
+loop + the localhost authenticator + COMPOUND dispatch into `internal/nfsv4`) and
+prove a NULL call + a basic COMPOUND against the running server (pynfs or a
+minimal client). That is also where the lifted server first *executes*.
