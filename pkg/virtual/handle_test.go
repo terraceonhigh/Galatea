@@ -30,3 +30,30 @@ func TestMemoryFileHandle(t *testing.T) {
 		t.Error("nodes with distinct inodes produced the same file handle")
 	}
 }
+
+// TestMemoryMandatoryAttributes guards against the bite that crashed a live
+// macOS mount: the NFSv4 server's FATTR4 encoder panics on any *mandatory*
+// attribute the FSAL leaves unset, and the real client requests a broad set.
+// (HasNamedAttributes was missing; the server panicked mid-GETATTR.) Assert the
+// in-memory FSAL sets every mandatory attribute when asked.
+func TestMemoryMandatoryAttributes(t *testing.T) {
+	const mandatory = AttributesMaskChangeID | AttributesMaskFileHandle |
+		AttributesMaskFileType | AttributesMaskHasNamedAttributes |
+		AttributesMaskInodeNumber | AttributesMaskIsInNamedAttributeDirectory |
+		AttributesMaskLinkCount
+	ctx := context.Background()
+	cases := []struct {
+		name string
+		node Node
+	}{
+		{"file", NewMemoryFile(2, PermissionsRead, []byte("hi"))},
+		{"directory", NewMemoryDirectory(1, PermissionsRead|PermissionsExecute, nil)},
+	}
+	for _, tc := range cases {
+		var a Attributes
+		tc.node.VirtualGetAttributes(ctx, mandatory, &a)
+		if missing := mandatory &^ a.GetFieldsPresent(); missing != 0 {
+			t.Errorf("%s: mandatory attributes left unset: mask %032b", tc.name, missing)
+		}
+	}
+}

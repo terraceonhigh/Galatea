@@ -109,6 +109,9 @@ func (f *memoryFile) fillAttributes(requested AttributesMask, a *Attributes) {
 	if requested&AttributesMaskFileHandle != 0 {
 		a.SetFileHandle(memoryFileHandle(f.inode))
 	}
+	if requested&AttributesMaskHasNamedAttributes != 0 {
+		a.SetHasNamedAttributes(false)
+	}
 	if requested&AttributesMaskIsInNamedAttributeDirectory != 0 {
 		// This FSAL has no named-attribute directories.
 		a.SetIsInNamedAttributeDirectory(false)
@@ -215,6 +218,9 @@ func (d *memoryDirectory) fillAttributes(requested AttributesMask, a *Attributes
 	}
 	if requested&AttributesMaskFileHandle != 0 {
 		a.SetFileHandle(memoryFileHandle(d.inode))
+	}
+	if requested&AttributesMaskHasNamedAttributes != 0 {
+		a.SetHasNamedAttributes(false)
 	}
 	if requested&AttributesMaskIsInNamedAttributeDirectory != 0 {
 		// This FSAL has no named-attribute directories.

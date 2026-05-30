@@ -4,6 +4,10 @@
 
 # Built CLI binary (built ad hoc with `go build ./cmd/galatea`)
 /galatea
+/galatea-bin
+
+# Ad-hoc NFS mountpoint used when testing `galatea serve` live.
+/galatea-mnt
 
 # Local-only working clones of third-party FOSS repositories. Daedalus
 # reads and lifts from these; they do not enter Galatea's git tree.
