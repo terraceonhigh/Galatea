@@ -109,6 +109,7 @@ type memoryFile struct {
 	inode     uint64
 	perms     Permissions
 	contents  []byte
+	mtime     time.Time     // last data modification time; set via SETATTR time_modify_set
 	readDelay time.Duration // if >0, VirtualRead sleeps this long first
 }
 
@@ -158,6 +159,9 @@ func (f *memoryFile) fillAttributes(requested AttributesMask, a *Attributes) {
 	if requested&AttributesMaskChangeID != 0 {
 		a.SetChangeID(0)
 	}
+	if requested&AttributesMaskLastDataModificationTime != 0 && !f.mtime.IsZero() {
+		a.SetLastDataModificationTime(f.mtime)
+	}
 }
 
 func (f *memoryFile) VirtualGetAttributes(ctx context.Context, requested AttributesMask, attributes *Attributes) {
@@ -188,6 +192,9 @@ func (f *memoryFile) VirtualSetAttributes(ctx context.Context, in *Attributes, r
 	}
 	if perms, ok := in.GetPermissions(); ok {
 		f.perms = perms
+	}
+	if mtime, ok := in.GetLastDataModificationTime(); ok {
+		f.mtime = mtime
 	}
 	f.fillAttributes(requested, attributes)
 	return StatusOK
@@ -287,6 +294,7 @@ type memoryDirectory struct {
 	mu        sync.Mutex
 	inode     uint64
 	perms     Permissions
+	mtime     time.Time // last modification time; set via SETATTR time_modify_set
 	children  map[string]Node
 	nextInode *atomic.Uint64 // non-nil => writable; shared across the tree
 }
@@ -346,6 +354,9 @@ func (d *memoryDirectory) fillAttributes(requested AttributesMask, a *Attributes
 	if requested&AttributesMaskChangeID != 0 {
 		a.SetChangeID(0)
 	}
+	if requested&AttributesMaskLastDataModificationTime != 0 && !d.mtime.IsZero() {
+		a.SetLastDataModificationTime(d.mtime)
+	}
 }
 
 func (d *memoryDirectory) VirtualGetAttributes(ctx context.Context, requested AttributesMask, attributes *Attributes) {
@@ -362,6 +373,9 @@ func (d *memoryDirectory) VirtualSetAttributes(ctx context.Context, in *Attribut
 	defer d.mu.Unlock()
 	if perms, ok := in.GetPermissions(); ok {
 		d.perms = perms
+	}
+	if mtime, ok := in.GetLastDataModificationTime(); ok {
+		d.mtime = mtime
 	}
 	d.fillAttributes(requested, attributes)
 	return StatusOK

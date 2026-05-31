@@ -3,6 +3,7 @@ package nfsv4
 import (
 	"bytes"
 	"testing"
+	"time"
 
 	"github.com/terraceonhigh/galatea/internal/xdr/pkg/protocols/nfsv4"
 	"github.com/terraceonhigh/galatea/pkg/virtual"
@@ -170,6 +171,102 @@ func TestConformanceCreateDir(t *testing.T) {
 	)
 	if res2.Status != nfsv4.NFS4_OK {
 		t.Fatalf("LOOKUP of created dir: status = %v, want NFS4_OK", res2.Status)
+	}
+}
+
+// TestConformanceSetattrMtime drives a real SETATTR over the wire setting TWO
+// attributes at once — FATTR4_MODE (33) and FATTR4_TIME_MODIFY_SET (54) — then
+// reads them back via GETATTR (FATTR4_MODE + the read-only FATTR4_TIME_MODIFY,
+// 53). Two attributes deliberately: the decoder reads fields positionally from
+// one buffer in ascending FATTR4-bit order, so a single-attribute test cannot
+// catch an ordering desync. This is the headless over-the-wire tier for the
+// utimens ceiling lift; the live `touch` re-run stays Architect-gated.
+//
+// NOTE on the wire: a client sets mtime via FATTR4_TIME_MODIFY_SET (a settime4
+// with a SET_TO_CLIENT/SERVER discriminator) — NOT FATTR4_TIME_MODIFY, which is
+// the read-only GETATTR attribute. Building either the decoder or this test
+// around the wrong bit would pass headless while a real `touch` is rejected.
+func TestConformanceSetattrMtime(t *testing.T) {
+	program := writableTestProgram()
+	want := time.Unix(1700000000, 0)
+	wantNT := timeToNfstime4(want)
+
+	// Build the SETATTR fattr4 by hand: MODE(33) then TIME_MODIFY_SET(54), in
+	// ascending order, both in attrmask word 1.
+	// 0o555 (r-x, no write) is distinct from the writable dir's 0o777 default and
+	// round-trips cleanly through this FSAL's single-user Permissions model
+	// (one rwx triple, no owner/group/all split) — so a changed mode here proves
+	// MODE was decoded *before* the time field, not just that the buffer parsed.
+	var av bytes.Buffer
+	if _, err := nfsv4.WriteMode4(&av, 0o555); err != nil {
+		t.Fatalf("encode mode: %v", err)
+	}
+	if _, err := (&nfsv4.Settime4_SET_TO_CLIENT_TIME4{Time: wantNT}).WriteTo(&av); err != nil {
+		t.Fatalf("encode settime: %v", err)
+	}
+	setMask := []uint32{0, (1 << (nfsv4.FATTR4_MODE - 32)) | (1 << (nfsv4.FATTR4_TIME_MODIFY_SET - 32))}
+
+	// CREATE dir "d"; after CREATE the current filehandle IS the new dir, so the
+	// SETATTR in the same COMPOUND targets it. The all-zeros (anonymous) stateid
+	// is correct for non-size attributes.
+	setRes := doCompound(t, program,
+		&nfsv4.NfsArgop4_OP_PUTROOTFH{},
+		&nfsv4.NfsArgop4_OP_CREATE{Opcreate: nfsv4.Create4args{
+			Objtype: &nfsv4.Createtype4_NF4DIR{}, Objname: "d"}},
+		&nfsv4.NfsArgop4_OP_SETATTR{Opsetattr: nfsv4.Setattr4args{
+			Stateid:       nfsv4.Stateid4{},
+			ObjAttributes: nfsv4.Fattr4{Attrmask: setMask, AttrVals: av.Bytes()}}},
+	)
+	if setRes.Status != nfsv4.NFS4_OK {
+		t.Fatalf("CREATE+SETATTR: status = %v, want NFS4_OK", setRes.Status)
+	}
+	sok := setRes.Resarray[2].(*nfsv4.NfsResop4_OP_SETATTR).Opsetattr
+	if sok.Status != nfsv4.NFS4_OK {
+		t.Fatalf("SETATTR op status = %v, want NFS4_OK", sok.Status)
+	}
+	if len(sok.Attrsset) < 2 || sok.Attrsset[1]&(1<<(nfsv4.FATTR4_TIME_MODIFY_SET-32)) == 0 {
+		t.Errorf("Attrsset = %v, want TIME_MODIFY_SET bit", sok.Attrsset)
+	}
+
+	// Read back MODE + TIME_MODIFY (the read-only mtime) in a fresh COMPOUND.
+	getRes := doCompound(t, program,
+		&nfsv4.NfsArgop4_OP_PUTROOTFH{},
+		&nfsv4.NfsArgop4_OP_LOOKUP{Oplookup: nfsv4.Lookup4args{Objname: "d"}},
+		&nfsv4.NfsArgop4_OP_GETATTR{Opgetattr: nfsv4.Getattr4args{
+			AttrRequest: []uint32{0, (1 << (nfsv4.FATTR4_MODE - 32)) | (1 << (nfsv4.FATTR4_TIME_MODIFY - 32))}}},
+	)
+	if getRes.Status != nfsv4.NFS4_OK {
+		t.Fatalf("read-back: status = %v, want NFS4_OK", getRes.Status)
+	}
+	fa := getRes.Resarray[2].(*nfsv4.NfsResop4_OP_GETATTR).Opgetattr.(*nfsv4.Getattr4res_NFS4_OK).Resok4.ObjAttributes
+
+	// Decode the result buffer positionally: MODE(33) then TIME_MODIFY(53).
+	r := bytes.NewReader(fa.AttrVals)
+	var w1 uint32
+	if len(fa.Attrmask) > 1 {
+		w1 = fa.Attrmask[1]
+	}
+	if w1&(1<<(nfsv4.FATTR4_MODE-32)) != 0 {
+		mode, _, err := nfsv4.ReadMode4(r)
+		if err != nil {
+			t.Fatalf("decode mode: %v", err)
+		}
+		if mode&0o777 != 0o555 {
+			t.Errorf("read-back mode = %o, want 0555", mode&0o777)
+		}
+	} else {
+		t.Fatal("read-back fattr4 missing MODE")
+	}
+	if w1&(1<<(nfsv4.FATTR4_TIME_MODIFY-32)) != 0 {
+		var got nfsv4.Nfstime4
+		if _, err := got.ReadFrom(r); err != nil {
+			t.Fatalf("decode time_modify: %v", err)
+		}
+		if got.Seconds != wantNT.Seconds || got.Nseconds != wantNT.Nseconds {
+			t.Errorf("read-back mtime = {%d,%d}, want {%d,%d}", got.Seconds, got.Nseconds, wantNT.Seconds, wantNT.Nseconds)
+		}
+	} else {
+		t.Fatal("read-back fattr4 missing TIME_MODIFY")
 	}
 }
 

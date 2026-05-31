@@ -3243,11 +3243,15 @@ func fattr4ToAttributes(in *nfsv4.Fattr4, out *virtual.Attributes) nfsv4.Nfsstat
 		}
 	}
 	if len(in.Attrmask) > 1 {
-		// Attributes 32 to 63.
+		// Attributes 32 to 63. Fields are read positionally from the buffer in
+		// ascending FATTR4 order: MODE(33) … OWNER(36)/OWNER_GROUP(37) …
+		// TIME_MODIFY_SET(54). The owner bits reject before any time read, so a
+		// MODE+TIME_MODIFY_SET request decodes [mode][settime] in that order.
 		f := in.Attrmask[1]
 		if f&^((1<<(nfsv4.FATTR4_MODE-32))|
 			(1<<(nfsv4.FATTR4_OWNER-32))|
-			(1<<(nfsv4.FATTR4_OWNER_GROUP-32))) != 0 {
+			(1<<(nfsv4.FATTR4_OWNER_GROUP-32))|
+			(1<<(nfsv4.FATTR4_TIME_MODIFY_SET-32))) != 0 {
 			return nfsv4.NFS4ERR_ATTRNOTSUPP
 		}
 		if f&(1<<(nfsv4.FATTR4_MODE-32)) != 0 {
@@ -3259,6 +3263,22 @@ func fattr4ToAttributes(in *nfsv4.Fattr4, out *virtual.Attributes) nfsv4.Nfsstat
 		}
 		if f&((1<<(nfsv4.FATTR4_OWNER-32))|(1<<(nfsv4.FATTR4_OWNER_GROUP-32))) != 0 {
 			return nfsv4.NFS4ERR_PERM
+		}
+		// FATTR4_TIME_MODIFY_SET (54) is the *writable* mtime (a settime4); the
+		// read-only FATTR4_TIME_MODIFY (53) is never sent in SETATTR. tools like
+		// `touch -t`, `cp -p`, `rsync -t` send SET_TO_CLIENT_TIME with an explicit
+		// stamp — decode that into the mtime attribute. SET_TO_SERVER_TIME ("use
+		// the server's clock now") is decoded but NOT applied: the lifted server
+		// has no wall clock (timestamps are deterministic by design), so honoring
+		// it is an architecture decision deferred until a clock is introduced.
+		if f&(1<<(nfsv4.FATTR4_TIME_MODIFY_SET-32)) != 0 {
+			settime, _, err := nfsv4.ReadSettime4(r)
+			if err != nil {
+				return nfsv4.NFS4ERR_BADXDR
+			}
+			if ct, ok := settime.(*nfsv4.Settime4_SET_TO_CLIENT_TIME4); ok {
+				out.SetLastDataModificationTime(nfstime4ToTime(ct.Time))
+			}
 		}
 	}
 	for i := 2; i < len(in.Attrmask); i++ {
@@ -3331,6 +3351,12 @@ func timeToNfstime4(t time.Time) nfsv4.Nfstime4 {
 		Seconds:  nanos / 1e9,
 		Nseconds: uint32(nanos % 1e9),
 	}
+}
+
+// nfstime4ToTime is the inverse of timeToNfstime4 — used to decode a client's
+// SETATTR time_modify_set (SET_TO_CLIENT_TIME) into a Go time.Time.
+func nfstime4ToTime(t nfsv4.Nfstime4) time.Time {
+	return time.Unix(t.Seconds, int64(t.Nseconds))
 }
 
 // pathParsertoLinktext4 converts the target of a symbolic link to its
