@@ -72,9 +72,11 @@ Today the shim implements ~18 of ~40 `fuse_operations`. A real tool needs the re
   round-trip + hard link with `nlink==2` — no kext, no FUSE-T, no root; clean
   teardown. This is the over-the-wire tier (CREATE-NF4LNK→LOOKUP→READLINK→LINK as
   real COMPOUNDs over the NFS client) that R9 1b/2b set as the bar.
-- **A1-times — `utimens` (mtime) ✅✅ LIVE-PROVEN (2026-05-30).** The first
-  server-layer attribute lift, proven end to end (`run-a1-live.sh`, 9/9). Three
-  pieces, all needed:
+- **A1-times — `utimens` (atime + mtime) ✅✅ LIVE-PROVEN (2026-05-30).** The first
+  server-layer attribute lift, proven end to end (`run-a1-live.sh`, **10/10** incl.
+  atime). Both atime and mtime are decoded, stored, emitted, and set through
+  `op->utimens` (independently — distinct-value tests prove they aren't
+  cross-wired). Three pieces, all needed:
   1. **Advertise** `FATTR4_TIME_ACCESS_SET`(48) + `FATTR4_TIME_MODIFY_SET`(54) in
      `FATTR4_SUPPORTED_ATTRS` — *the* live-only bug: the macOS client sends a
      SETATTR only for attributes the server advertises, so without this it
@@ -98,10 +100,11 @@ Today the shim implements ~18 of ~40 `fuse_operations`. A real tool needs the re
     `OWNER_GROUP`. The wire form is `user@domain`, so lifting it drags in
     id-mapping (name vs numeric-string, client domain) — a policy decision, not
     mechanics; deferred deliberately.
-  - `utimens` **atime** + **`SET_TO_SERVER_TIME`** — atime needs a new field in
-    `virtual.Attributes` (mtime-only ships today); server-time needs a wall clock
-    the deterministic server lacks. Both deferred; `op->utimens` passes
-    `UTIME_OMIT` for atime meanwhile.
+  - `utimens` **`SET_TO_SERVER_TIME`** — atime is now done (above); what remains is
+    server-time ("set to the clock's now"), which needs a wall clock the
+    deterministic server intentionally lacks. Decoded but not applied; a plain
+    `touch` (no `-t`) uses this path, so it's a visible no-op until a clock is
+    introduced — an architecture decision (the `clock` shim is already imported).
   - `fallocate` — **no `OP_ALLOCATE`** in the lifted NFSv4.0 server (it's a 4.2
     op).
   - `statfs` — no `virtual` hook; free-space is FATTR4 space-* through GETATTR.
