@@ -83,13 +83,67 @@ static int call_chmod(const struct fuse_operations *op, const char *path, unsign
 	return op->chmod(path, (mode_t)mode);
 }
 
-// call_readdir is defined in bridge.c, which includes _cgo_export.h to reference
-// the exported Go filler goFill with cgo's exact signature.
-int call_readdir(const struct fuse_operations *op, const char *path, uintptr_t buf);
+// --- lifecycle: init / destroy ---
+// libfuse calls init() once before any operation; many filesystems (cgofuse's
+// included) do their setup there, and init's return value becomes private_data.
+static int has_init(const struct fuse_operations *op) { return op->init != NULL; }
+static void *call_init(const struct fuse_operations *op) {
+	struct fuse_conn_info conn;
+	memset(&conn, 0, sizeof(conn));
+	return op->init(&conn);
+}
+static void call_destroy(const struct fuse_operations *op, void *pd) {
+	if (op->destroy) op->destroy(pd);
+}
+
+// galatea_set_user_data (defined in fuse_compat.c) updates what
+// fuse_get_context()->private_data returns — used to install init()'s result.
+void galatea_set_user_data(void *ud);
+
+// readdir collection via a PURE C filler (no Go-export callback). The app's
+// readdir calls c_filler, which appends NUL-terminated names into a caller-owned
+// dirbuf; Go reads it after the call returns. This avoids handing the app a
+// Go-exported function pointer — critical when the app is itself a Go program
+// (e.g. cgofuse/rclone): a Go-export callback would re-enter *our* Go runtime
+// from within the app's runtime, which Go cannot do (it faults; cgofuse reports
+// it as EIO). A C filler keeps readdir to the same one-way shape getattr uses.
+struct galatea_dirbuf { char names[65536]; size_t len; int count; int overflow; };
+static int c_filler(void *buf, const char *name, const struct stat *stbuf, off_t off) {
+	(void)stbuf; (void)off;
+	struct galatea_dirbuf *db = (struct galatea_dirbuf *)buf;
+	size_t n = strlen(name) + 1;
+	if (db->len + n > sizeof(db->names)) { db->overflow = 1; return 1; } // buffer full
+	memcpy(db->names + db->len, name, n);
+	db->len += n;
+	db->count++;
+	return 0;
+}
+static int call_readdir(const struct fuse_operations *op, const char *path, struct galatea_dirbuf *db, struct fuse_file_info *fi) {
+	if (!op->readdir) return -ENOSYS;
+	return op->readdir(path, db, (fuse_fill_dir_t)c_filler, 0, fi);
+}
+
+// Handle-lifecycle trampolines. Stateful filesystems (cgofuse, real tools) hand
+// out a file handle in opendir()/open() that readdir()/read()/write() then use,
+// and free it in releasedir()/release(). Path-based filesystems (hello, the
+// passthrough fixtures) ignore the handle. We bracket each data op with its
+// open/release so a single fuse_file_info (carrying the handle) threads through —
+// keeping the shim stateless while satisfying handle-based filesystems.
+static int call_opendir(const struct fuse_operations *op, const char *path, struct fuse_file_info *fi) {
+	if (!op->opendir) return 0;
+	return op->opendir(path, fi);
+}
+static void call_releasedir(const struct fuse_operations *op, const char *path, struct fuse_file_info *fi) {
+	if (op->releasedir) op->releasedir(path, fi);
+}
+static void call_release(const struct fuse_operations *op, const char *path, struct fuse_file_info *fi) {
+	if (op->release) op->release(path, fi);
+}
 */
 import "C"
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"hash/fnv"
@@ -99,7 +153,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path"
-	"runtime/cgo"
 	"sort"
 	"strings"
 	"sync"
@@ -111,22 +164,6 @@ import (
 	"github.com/terraceonhigh/galatea/internal/xdr/pkg/rpcserver"
 	"github.com/terraceonhigh/galatea/pkg/virtual"
 )
-
-// dirCollector gathers entry names the app reports via the filler.
-type dirCollector struct{ names []string }
-
-// goFill is the C-callable fuse_fill_dir_t the app invokes for each directory
-// entry. buf carries a cgo.Handle (passed as uintptr, arriving as void*); we
-// recover it via uintptr(buf). stbuf may be NULL (hello passes it so) — we do
-// not dereference it; per-child getattr fills attributes later. Return 0 to keep
-// the app reporting (1 would mean "buffer full").
-//
-//export goFill
-func goFill(buf unsafe.Pointer, name *C.char, stbuf *C.struct_stat, off C.off_t) C.int {
-	coll := cgo.Handle(uintptr(buf)).Value().(*dirCollector)
-	coll.names = append(coll.names, C.GoString(name))
-	return 0
-}
 
 // fuseConn holds the app's operation table and serialises every call into it.
 type fuseConn struct {
@@ -152,6 +189,9 @@ func (c *fuseConn) getattr(p string) (C.struct_stat, virtual.Status) {
 	c.mu.Lock()
 	r := C.call_getattr(c.op, cp, &st)
 	c.mu.Unlock()
+	if os.Getenv("GALATEA_FUSE_TRACE") != "" {
+		fmt.Fprintf(os.Stderr, "[shim] getattr(%q) -> r=%d mode=%#o size=%d\n", p, int(r), uint32(st.st_mode), int64(st.st_size))
+	}
 	switch {
 	case r == 0:
 		return st, virtual.StatusOK
@@ -168,25 +208,38 @@ func (c *fuseConn) getattr(p string) (C.struct_stat, virtual.Status) {
 // virtual layer never expects them (osfs via os.ReadDir never sees them), and a
 // getattr("/.") would ENOENT and break the listing.
 func (c *fuseConn) readdir(p string) ([]string, virtual.Status) {
-	coll := &dirCollector{}
-	h := cgo.NewHandle(coll)
-	defer h.Delete()
 	cp := C.CString(p)
 	defer C.free(unsafe.Pointer(cp))
+	var db C.struct_galatea_dirbuf
+	var fi C.struct_fuse_file_info
 	c.mu.Lock()
-	r := C.call_readdir(c.op, cp, C.uintptr_t(h))
+	r := C.call_opendir(c.op, cp, &fi) // hands a handle to readdir; no-op for path-based fs's
+	if r >= 0 {
+		r = C.call_readdir(c.op, cp, &db, &fi)
+		C.call_releasedir(c.op, cp, &fi)
+	}
 	c.mu.Unlock()
+	if db.overflow != 0 {
+		fmt.Fprintf(os.Stderr, "galatea-libfuse: readdir(%q): directory too large for buffer, entries truncated\n", p)
+	}
+	// db.names holds db.count NUL-terminated names back to back; "." and ".."
+	// are dropped (the virtual layer doesn't expect them — see getattr("/.")).
+	raw := C.GoBytes(unsafe.Pointer(&db.names[0]), C.int(db.len))
+	var names []string
+	for _, b := range bytes.Split(raw, []byte{0}) {
+		n := string(b)
+		if n == "" || n == "." || n == ".." {
+			continue
+		}
+		names = append(names, n)
+	}
+	if os.Getenv("GALATEA_FUSE_TRACE") != "" {
+		fmt.Fprintf(os.Stderr, "[shim] readdir(%q) -> r=%d names=%v\n", p, int(r), names)
+	}
 	if r != 0 {
 		return nil, virtual.StatusErrIO
 	}
-	out := coll.names[:0]
-	for _, n := range coll.names {
-		if n == "." || n == ".." {
-			continue
-		}
-		out = append(out, n)
-	}
-	return out, virtual.StatusOK
+	return names, virtual.StatusOK
 }
 
 // resolveHandle decodes a path-based file handle (the node's absolute FUSE
@@ -537,21 +590,19 @@ func (f *fuseFile) VirtualGetAttributes(ctx context.Context, requested virtual.A
 }
 
 func (f *fuseFile) VirtualOpenSelf(ctx context.Context, shareAccess virtual.ShareMask, options *virtual.OpenExistingOptions, requested virtual.AttributesMask, a *virtual.Attributes) virtual.Status {
-	cp := C.CString(f.path)
-	defer C.free(unsafe.Pointer(cp))
-	f.conn.mu.Lock()
 	if options != nil && options.Truncate { // open-with-truncate, e.g. shell `>`
-		if r := C.call_truncate(f.conn.op, cp, 0); r < 0 {
-			f.conn.mu.Unlock()
+		cp := C.CString(f.path)
+		f.conn.mu.Lock()
+		r := C.call_truncate(f.conn.op, cp, 0)
+		f.conn.mu.Unlock()
+		C.free(unsafe.Pointer(cp))
+		if r < 0 {
 			return errStatus(r)
 		}
 	}
-	var fi C.struct_fuse_file_info
-	r := C.call_open(f.conn.op, cp, &fi)
-	f.conn.mu.Unlock()
-	if r < 0 {
-		return errStatus(r)
-	}
+	// No op->open here: VirtualRead/VirtualWrite bracket each data op with their
+	// own open/release, so a handle-based fs gets a valid fh per op and we don't
+	// leak its open handle across the NFS open lifecycle.
 	st, status := f.conn.getattr(f.path)
 	if status != virtual.StatusOK {
 		return status
@@ -568,10 +619,14 @@ func (f *fuseFile) VirtualRead(buf []byte, offset uint64) (int, bool, virtual.St
 	defer C.free(unsafe.Pointer(cp))
 	var fi C.struct_fuse_file_info
 	f.conn.mu.Lock()
-	r := C.call_read(f.conn.op, cp, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len(buf)), C.off_t(offset), &fi)
+	r := C.call_open(f.conn.op, cp, &fi) // open → read(fh) → release, one fi
+	if r >= 0 {
+		r = C.call_read(f.conn.op, cp, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len(buf)), C.off_t(offset), &fi)
+		C.call_release(f.conn.op, cp, &fi)
+	}
 	f.conn.mu.Unlock()
 	if r < 0 {
-		return 0, false, virtual.StatusErrIO
+		return 0, false, errStatus(r)
 	}
 	n := int(r)
 	// FUSE read returns the byte count; a short read means end of file.
@@ -642,7 +697,11 @@ func (f *fuseFile) VirtualWrite(buf []byte, offset uint64) (int, virtual.Status)
 	defer C.free(unsafe.Pointer(cp))
 	var fi C.struct_fuse_file_info
 	f.conn.mu.Lock()
-	r := C.call_write(f.conn.op, cp, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len(buf)), C.off_t(offset), &fi)
+	r := C.call_open(f.conn.op, cp, &fi) // open → write(fh) → release, one fi
+	if r >= 0 {
+		r = C.call_write(f.conn.op, cp, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len(buf)), C.off_t(offset), &fi)
+		C.call_release(f.conn.op, cp, &fi)
+	}
 	f.conn.mu.Unlock()
 	if r < 0 {
 		return 0, errStatus(r)
@@ -693,6 +752,18 @@ func galateaFuseMain(argc C.int, argv **C.char, op unsafe.Pointer) C.int {
 		return 1
 	}
 
+	cop := (*C.struct_fuse_operations)(op)
+	// libfuse calls init() before any operation; cgofuse (and many filesystems)
+	// build their state there, and init's return value replaces private_data.
+	// Run it before the mount, so the first client op sees an initialised fs.
+	var privData unsafe.Pointer
+	if C.has_init(cop) != 0 {
+		privData = C.call_init(cop)
+		if privData != nil {
+			C.galatea_set_user_data(privData)
+		}
+	}
+
 	root, resolver := NewFuseRoot(op)
 	var program nfsproto.Nfs4Program = nfssrv.NewReadOnlyProgram(root, resolver)
 	server := rpcserver.NewServer(
@@ -740,6 +811,7 @@ func galateaFuseMain(argc C.int, argv **C.char, op unsafe.Pointer) C.int {
 	<-sig
 	fmt.Println("\ngalatea-libfuse: signal received, unmounting")
 	_ = exec.Command("umount", mountpoint).Run()
+	C.call_destroy(cop, privData) // libfuse calls destroy() with private_data at teardown
 	_ = ln.Close()
 	return 0
 }
