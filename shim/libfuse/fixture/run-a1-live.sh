@@ -97,6 +97,29 @@ if ln "$MNT/target.txt" "$MNT/hard" 2>/dev/null; then
   [ "$NLINK" = "2" ] && ok "hard link nlink = 2" || bad "nlink = $NLINK (want 2)"
 else bad "hard link: ln at the mount failed"; fi
 
+# 6. utimens via `touch -t` — an explicit timestamp (SET_TO_CLIENT_TIME). This
+#    is the path the server fully implements; expect the mtime to change to 2000.
+if touch -t 200001020304.05 "$MNT/target.txt" 2>/dev/null; then
+  YEAR="$(stat -f '%Sm' -t '%Y' "$MNT/target.txt" 2>/dev/null || true)"
+  [ "$YEAR" = "2000" ] && ok "touch -t sets mtime (year 2000 through the mount)" || bad "touch -t: mtime year = '$YEAR' (want 2000)"
+  BYEAR="$(stat -f '%Sm' -t '%Y' "$BACKING/target.txt" 2>/dev/null || true)"
+  [ "$BYEAR" = "2000" ] && ok "touch -t effect lands in the backing store" || bad "touch -t: backing mtime year = '$BYEAR' (want 2000)"
+else bad "touch -t at the mount failed"; fi
+
+# 7. plain `touch` (current time) — INFORMATIONAL, not a pass/fail. macOS may
+#    send SET_TO_SERVER_TIME for this, which the server decodes but does NOT
+#    apply (no wall clock — server-time is a deferred architecture decision). So
+#    a no-op here is the expected, documented gap; this probe just reveals which
+#    path macOS actually uses, so we know whether server-time is worth building.
+BEFORE="$(stat -f '%m' "$MNT/target.txt" 2>/dev/null || echo 0)"
+touch "$MNT/target.txt" 2>/dev/null || true
+AFTER="$(stat -f '%m' "$MNT/target.txt" 2>/dev/null || echo 0)"
+if [ "$AFTER" != "$BEFORE" ]; then
+  echo "  INFO: plain touch changed mtime ($BEFORE → $AFTER) — macOS sends SET_TO_CLIENT_TIME"
+else
+  echo "  INFO: plain touch left mtime unchanged — macOS likely sends SET_TO_SERVER_TIME (unimplemented by design; the expected gap)"
+fi
+
 # --- verdict -----------------------------------------------------------------
 echo "--- result: $PASS passed, $FAIL failed ---"
 [ "$FAIL" = 0 ]
