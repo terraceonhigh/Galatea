@@ -45,10 +45,32 @@ the last entry:
    Verified-before-wiring surfaced a **ceiling**: `chown`/`utimens`/`fallocate`/
    `statfs` can't reach the FSAL at the NFSv4.0 layer (server rejects owner/time
    SETATTR; no ALLOCATE op) — a server-side attribute task, not shim wiring.)
+
+5. **utimens (mtime) — first server-layer attribute lift, headless-proven
+   (2026-05-30 night, unattended).** Taught the lifted server to accept a client
+   setting mtime over the wire: decoder accepts `FATTR4_TIME_MODIFY_SET` (54, the
+   *writable* settime4 — the `_SET` trap the advisor caught; `TIME_MODIFY`/53 is
+   read-only), in-memory FSAL stores+emits mtime, shim `VirtualSetAttributes`→
+   `op->utimens`. `SET_TO_CLIENT_TIME` (touch -t/cp -p/rsync -t) works;
+   `SET_TO_SERVER_TIME` decoded-but-not-applied (no wall clock — deferred).
+   Proven by `TestConformanceSetattrMtime` (over-the-wire, 2 attrs) +
+   `TestFuseFSUtimens` (shim). Commits `6d5a1cd`/`3b4a8e0`/`52032d8`. **Still
+   ceiling:** `chown` (idmap policy), atime (new attr field), fallocate (no 4.2
+   ALLOCATE), statfs (no hook).
+
+**↳ WAKE-UP (for the Architect, 2026-05-30 night):** while you slept I lifted
+utimens(mtime) end to end — all headless-green (`go test ./... && -race`,
+CGO-free held, fmt clean). **One live re-run waiting:** `bash
+shim/libfuse/fixture/run-a1-live.sh` — it now also exercises `touch -t` (must
+pass) and plain `touch` (informational: reveals whether macOS sends CLIENT- or
+SERVER-time). Paste the output and I'll mark the utimens live gate met (or fix
+whatever the mount surfaces). Nothing is half-applied; every commit is green.
+
 **Goal:** **R10 — dual-license viability (feature phases).** Milestone A and GOAL
 B (R9, incl. the marquee) are complete and banked. The active cursor is Phase A —
 full libfuse-2.x op coverage; A1's structural ops (symlink/readlink/link) are in
-and **live-proven on macOS**.
+and **live-proven on macOS**, and **utimens(mtime)** is headless-proven,
+**live-pending** the `run-a1-live.sh` re-run.
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
 pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
 `MISTAKES.md` M-003.)

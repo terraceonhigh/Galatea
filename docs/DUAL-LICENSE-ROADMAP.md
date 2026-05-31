@@ -72,21 +72,31 @@ Today the shim implements ~18 of ~40 `fuse_operations`. A real tool needs the re
   round-trip + hard link with `nlink==2` — no kext, no FUSE-T, no root; clean
   teardown. This is the over-the-wire tier (CREATE-NF4LNK→LOOKUP→READLINK→LINK as
   real COMPOUNDs over the NFS client) that R9 1b/2b set as the bar.
-- **A1-ceiling — what A1 *can't* reach at the NFSv4.0 layer (a server-layer task,
-  not shim wiring).** Verified by reading the dispatch before wiring (the
-  advisor's "compiles-and-lies" check), these never reach the FSAL today:
-  - `chown` — the server's `fattr4ToAttributes` returns **NFS4ERR_PERM** for
-    `OWNER`/`OWNER_GROUP`.
-  - `utimens` — same decoder rejects `TIME_MODIFY`/everything-else with
-    **NFS4ERR_ATTRNOTSUPP**; also `virtual.Attributes` carries only mtime, no
-    atime.
+- **A1-times — `utimens` (mtime) ✅ headless, live-pending (2026-05-30).** The
+  first server-layer attribute lift. The decoder (`fattr4ToAttributes`) now
+  accepts **`FATTR4_TIME_MODIFY_SET`** (54, the *writable* settime4 — not the
+  read-only `TIME_MODIFY`/53 a client never sends in SETATTR), the in-memory FSAL
+  stores+emits mtime, and the shim's `VirtualSetAttributes`→`op->utimens` carries
+  it. `SET_TO_CLIENT_TIME` (what `touch -t`/`cp -p`/`rsync -t` send) works;
+  `SET_TO_SERVER_TIME` is decoded but **not applied** — the lifted server has no
+  wall clock (deterministic by design), so server-time is a deferred architecture
+  decision. Proven headless: `TestConformanceSetattrMtime` (over-the-wire, 2-attr
+  MODE+TIME_MODIFY_SET to catch ordering desync) + `TestFuseFSUtimens` (shim).
+  Live `touch` re-run pending (in `run-a1-live.sh`). Commits `6d5a1cd`/`3b4a8e0`/
+  `52032d8`.
+- **A1-ceiling — still a server-layer task, not shim wiring** (verified by reading
+  the dispatch before wiring — the advisor's "compiles-and-lies" check):
+  - `chown` — `fattr4ToAttributes` returns **NFS4ERR_PERM** for `OWNER`/
+    `OWNER_GROUP`. The wire form is `user@domain`, so lifting it drags in
+    id-mapping (name vs numeric-string, client domain) — a policy decision, not
+    mechanics; deferred deliberately.
+  - `utimens` **atime** + **`SET_TO_SERVER_TIME`** — atime needs a new field in
+    `virtual.Attributes` (mtime-only ships today); server-time needs a wall clock
+    the deterministic server lacks. Both deferred; `op->utimens` passes
+    `UTIME_OMIT` for atime meanwhile.
   - `fallocate` — **no `OP_ALLOCATE`** in the lifted NFSv4.0 server (it's a 4.2
     op).
   - `statfs` — no `virtual` hook; free-space is FATTR4 space-* through GETATTR.
-  Unblocking these means extending the *server's* `fattr4ToAttributes` /
-  `attributesToFattr4` (and adding atime to `virtual.Attributes`), with its own
-  over-the-wire conformance test — a distinct, larger piece than the shim ops.
-  ~1–2 wks for the server-side attribute work when prioritised.
 - **A1-misc — `flush`/`fsync`/`fsyncdir`/`access`:** handled at the
   server/client layer without a distinct FSAL op (ACCESS via GETATTR+mode;
   flush/fsync are client-side or sane no-ops) — no shim work needed.
