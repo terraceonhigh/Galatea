@@ -22,6 +22,7 @@
 #include <fcntl.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <time.h>
 
 static char g_root[1024];
@@ -88,12 +89,17 @@ static int pt_utimens(const char *path, const struct timespec tv[2]) {
 	char p[2048]; full(path, p, sizeof(p));
 	return utimensat(AT_FDCWD, p, tv, 0) == 0 ? 0 : -errno;
 }
+static int pt_statfs(const char *path, struct statvfs *st) {
+	char p[2048]; full(path, p, sizeof(p));
+	return statvfs(p, st) == 0 ? 0 : -errno;
+}
 
 static struct fuse_operations pt_ops = {
 	.getattr = pt_getattr, .readdir = pt_readdir, .open = pt_open, .read = pt_read,
 	.write = pt_write, .mknod = pt_mknod, .mkdir = pt_mkdir, .unlink = pt_unlink,
 	.rmdir = pt_rmdir, .rename = pt_rename, .truncate = pt_truncate, .chmod = pt_chmod,
 	.symlink = pt_symlink, .readlink = pt_readlink, .link = pt_link, .utimens = pt_utimens,
+	.statfs = pt_statfs,
 };
 
 int main(int argc, char *argv[]) {

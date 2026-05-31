@@ -535,8 +535,14 @@ func (p *nfs40Program) writeAttributes(attributes *virtual.Attributes, attrReque
 					(1 << nfsv4.FATTR4_LEASE_TIME) |
 					(1 << nfsv4.FATTR4_RDATTR_ERROR) |
 					(1 << nfsv4.FATTR4_FILEHANDLE) |
-					(1 << nfsv4.FATTR4_FILEID),
+					(1 << nfsv4.FATTR4_FILEID) |
+					(1 << nfsv4.FATTR4_FILES_AVAIL) |
+					(1 << nfsv4.FATTR4_FILES_FREE) |
+					(1 << nfsv4.FATTR4_FILES_TOTAL),
 				(1 << (nfsv4.FATTR4_MODE - 32)) |
+					(1 << (nfsv4.FATTR4_SPACE_AVAIL - 32)) |
+					(1 << (nfsv4.FATTR4_SPACE_FREE - 32)) |
+					(1 << (nfsv4.FATTR4_SPACE_TOTAL - 32)) |
 					(1 << (nfsv4.FATTR4_NUMLINKS - 32)) |
 					(1 << (nfsv4.FATTR4_OWNER - 32)) |
 					(1 << (nfsv4.FATTR4_OWNER_GROUP - 32)) |
@@ -612,6 +618,26 @@ func (p *nfs40Program) writeAttributes(attributes *virtual.Attributes, attrReque
 			s |= b
 			nfsv4.WriteUint64T(w, attributes.GetInodeNumber())
 		}
+		// FILES_AVAIL(21)/FREE(22)/TOTAL(23) — emitted only when present, so a
+		// backend that doesn't report them simply omits the bits (additive).
+		if b := uint32(1 << nfsv4.FATTR4_FILES_AVAIL); f&b != 0 {
+			if v, ok := attributes.GetFilesAvail(); ok {
+				s |= b
+				nfsv4.WriteUint64T(w, v)
+			}
+		}
+		if b := uint32(1 << nfsv4.FATTR4_FILES_FREE); f&b != 0 {
+			if v, ok := attributes.GetFilesFree(); ok {
+				s |= b
+				nfsv4.WriteUint64T(w, v)
+			}
+		}
+		if b := uint32(1 << nfsv4.FATTR4_FILES_TOTAL); f&b != 0 {
+			if v, ok := attributes.GetFilesTotal(); ok {
+				s |= b
+				nfsv4.WriteUint64T(w, v)
+			}
+		}
 		attrMask[0] = s
 	}
 	if len(attrRequest) > 1 {
@@ -646,6 +672,26 @@ func (p *nfs40Program) writeAttributes(attributes *virtual.Attributes, attrReque
 				v = strconv.FormatUint(uint64(ownerGroupID), 10)
 			}
 			nfsv4.WriteUtf8strMixed(w, v)
+		}
+		// SPACE_AVAIL(42)/FREE(43)/TOTAL(44), in bytes — bit-only-if-present,
+		// ascending order, between OWNER_GROUP(37) and TIME_ACCESS(47).
+		if b := uint32(1 << (nfsv4.FATTR4_SPACE_AVAIL - 32)); f&b != 0 {
+			if v, ok := attributes.GetSpaceAvail(); ok {
+				s |= b
+				nfsv4.WriteUint64T(w, v)
+			}
+		}
+		if b := uint32(1 << (nfsv4.FATTR4_SPACE_FREE - 32)); f&b != 0 {
+			if v, ok := attributes.GetSpaceFree(); ok {
+				s |= b
+				nfsv4.WriteUint64T(w, v)
+			}
+		}
+		if b := uint32(1 << (nfsv4.FATTR4_SPACE_TOTAL - 32)); f&b != 0 {
+			if v, ok := attributes.GetSpaceTotal(); ok {
+				s |= b
+				nfsv4.WriteUint64T(w, v)
+			}
 		}
 		if b := uint32(1 << (nfsv4.FATTR4_TIME_ACCESS - 32)); f&b != 0 {
 			s |= b
@@ -1081,6 +1127,14 @@ func (s *compoundState) opGetattr(ctx context.Context, args *nfsv4.Getattr4args)
 	currentNode, _, st := s.currentFileHandle.getNode()
 	if st != nfsv4.NFS4_OK {
 		return &nfsv4.Getattr4res_default{Status: st}
+	}
+	if os.Getenv("GALATEA_GETATTR_TRACE") != "" {
+		req := args.AttrRequest
+		space := len(req) > 1 && req[1]&((1<<(nfsv4.FATTR4_SPACE_AVAIL-32))|(1<<(nfsv4.FATTR4_SPACE_FREE-32))|(1<<(nfsv4.FATTR4_SPACE_TOTAL-32))) != 0
+		files := len(req) > 0 && req[0]&((1<<nfsv4.FATTR4_FILES_AVAIL)|(1<<nfsv4.FATTR4_FILES_FREE)|(1<<nfsv4.FATTR4_FILES_TOTAL)) != 0
+		if space || files {
+			fmt.Fprintf(os.Stderr, "[getattr] space/files requested: attrRequest=%v\n", req)
+		}
 	}
 	var attributes virtual.Attributes
 	currentNode.VirtualGetAttributes(ctx, attrRequestToAttributesMask(args.AttrRequest), &attributes)
@@ -3090,6 +3144,15 @@ func attrRequestToAttributesMask(attrRequest nfsv4.Bitmap4) virtual.AttributesMa
 		if f&uint32(1<<nfsv4.FATTR4_FILEID) != 0 {
 			attributesMask |= virtual.AttributesMaskInodeNumber
 		}
+		if f&uint32(1<<nfsv4.FATTR4_FILES_AVAIL) != 0 {
+			attributesMask |= virtual.AttributesMaskFilesAvail
+		}
+		if f&uint32(1<<nfsv4.FATTR4_FILES_FREE) != 0 {
+			attributesMask |= virtual.AttributesMaskFilesFree
+		}
+		if f&uint32(1<<nfsv4.FATTR4_FILES_TOTAL) != 0 {
+			attributesMask |= virtual.AttributesMaskFilesTotal
+		}
 	}
 	if len(attrRequest) > 1 {
 		// Attributes 32 to 63.
@@ -3102,6 +3165,15 @@ func attrRequestToAttributesMask(attrRequest nfsv4.Bitmap4) virtual.AttributesMa
 		}
 		if f&uint32(1<<(nfsv4.FATTR4_OWNER-32)) != 0 {
 			attributesMask |= virtual.AttributesMaskOwnerUserID
+		}
+		if f&uint32(1<<(nfsv4.FATTR4_SPACE_AVAIL-32)) != 0 {
+			attributesMask |= virtual.AttributesMaskSpaceAvail
+		}
+		if f&uint32(1<<(nfsv4.FATTR4_SPACE_FREE-32)) != 0 {
+			attributesMask |= virtual.AttributesMaskSpaceFree
+		}
+		if f&uint32(1<<(nfsv4.FATTR4_SPACE_TOTAL-32)) != 0 {
+			attributesMask |= virtual.AttributesMaskSpaceTotal
 		}
 		if f&uint32(1<<(nfsv4.FATTR4_OWNER_GROUP-32)) != 0 {
 			attributesMask |= virtual.AttributesMaskOwnerGroupID

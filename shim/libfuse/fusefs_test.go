@@ -319,3 +319,33 @@ func TestFuseFSUtimens(t *testing.T) {
 		t.Fatalf("getattr atime = %d ok=%v, want %d", got.Unix(), ok, wantA.Unix())
 	}
 }
+
+// TestFuseFSStatfs covers the statfs path: VirtualGetAttributes requesting the
+// filesystem-wide space/inode attributes → op->statfs → blocks-to-bytes
+// conversion. The passthrough fixture statvfs()es a real host temp dir, so the
+// numbers are real: total > 0 and total ≥ free ≥ avail (the invariant df relies
+// on). The exact-value correctness is covered headless by TestConformanceStatfs.
+func TestFuseFSStatfs(t *testing.T) {
+	root := t.TempDir()
+	fsRoot, _ := NewFuseRoot(passthroughOps(root))
+	ctx := context.Background()
+
+	var a virtual.Attributes
+	fsRoot.VirtualGetAttributes(ctx, statfsMask, &a)
+
+	total, okT := a.GetSpaceTotal()
+	free, okF := a.GetSpaceFree()
+	avail, okA := a.GetSpaceAvail()
+	if !okT || !okF || !okA {
+		t.Fatalf("space attrs unset: total=%v free=%v avail=%v", okT, okF, okA)
+	}
+	if total == 0 {
+		t.Fatal("space_total = 0 (statfs not reaching op->statfs?)")
+	}
+	if !(total >= free && free >= avail) {
+		t.Fatalf("space invariant violated: total=%d free=%d avail=%d", total, free, avail)
+	}
+	if ft, ok := a.GetFilesTotal(); !ok || ft == 0 {
+		t.Fatalf("files_total = %d ok=%v (want > 0)", ft, ok)
+	}
+}

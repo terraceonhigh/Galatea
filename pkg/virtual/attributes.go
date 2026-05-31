@@ -56,6 +56,19 @@ const (
 	// (st_atim). Added at the end of the block so existing bit values
 	// are unchanged.
 	AttributesMaskLastAccessTime
+	// AttributesMaskSpaceTotal/Free/Avail request the filesystem's total,
+	// free, and available-to-user space in BYTES (FATTR4_SPACE_TOTAL /
+	// _FREE / _AVAIL) — what `df` and Finder show as volume capacity.
+	AttributesMaskSpaceTotal
+	AttributesMaskSpaceFree
+	AttributesMaskSpaceAvail
+	// AttributesMaskFilesTotal/Free/Avail request the filesystem's total,
+	// free, and available file (inode) counts (FATTR4_FILES_TOTAL / _FREE /
+	// _AVAIL) — `df`'s inode columns. All six are filesystem-wide; a backend
+	// that can't report them simply leaves them unset (additive, non-breaking).
+	AttributesMaskFilesTotal
+	AttributesMaskFilesFree
+	AttributesMaskFilesAvail
 )
 
 // Attributes of a file, normally requested through stat() or readdir().
@@ -81,6 +94,12 @@ type Attributes struct {
 	permissions                     Permissions
 	sizeBytes                       uint64
 	symlinkTarget                   Parser
+	spaceTotal                      uint64
+	spaceFree                       uint64
+	spaceAvail                      uint64
+	filesTotal                      uint64
+	filesFree                       uint64
+	filesAvail                      uint64
 }
 
 // GetFieldsPresent returns the mask of attributes that have been set.
@@ -206,6 +225,80 @@ func (a *Attributes) GetLastAccessTime() (time.Time, bool) {
 func (a *Attributes) SetLastAccessTime(lastAccessTime time.Time) *Attributes {
 	a.lastAccessTime = lastAccessTime
 	a.fieldsPresent |= AttributesMaskLastAccessTime
+	return a
+}
+
+// --- filesystem-wide space/inode counts (statfs / df) ---
+
+// GetSpaceTotal returns total filesystem space in bytes (FATTR4_SPACE_TOTAL).
+func (a *Attributes) GetSpaceTotal() (uint64, bool) {
+	return a.spaceTotal, a.fieldsPresent&AttributesMaskSpaceTotal != 0
+}
+
+// SetSpaceTotal sets total filesystem space in bytes.
+func (a *Attributes) SetSpaceTotal(v uint64) *Attributes {
+	a.spaceTotal = v
+	a.fieldsPresent |= AttributesMaskSpaceTotal
+	return a
+}
+
+// GetSpaceFree returns free filesystem space in bytes (FATTR4_SPACE_FREE).
+func (a *Attributes) GetSpaceFree() (uint64, bool) {
+	return a.spaceFree, a.fieldsPresent&AttributesMaskSpaceFree != 0
+}
+
+// SetSpaceFree sets free filesystem space in bytes.
+func (a *Attributes) SetSpaceFree(v uint64) *Attributes {
+	a.spaceFree = v
+	a.fieldsPresent |= AttributesMaskSpaceFree
+	return a
+}
+
+// GetSpaceAvail returns space available to the user in bytes (FATTR4_SPACE_AVAIL).
+func (a *Attributes) GetSpaceAvail() (uint64, bool) {
+	return a.spaceAvail, a.fieldsPresent&AttributesMaskSpaceAvail != 0
+}
+
+// SetSpaceAvail sets space available to the user in bytes.
+func (a *Attributes) SetSpaceAvail(v uint64) *Attributes {
+	a.spaceAvail = v
+	a.fieldsPresent |= AttributesMaskSpaceAvail
+	return a
+}
+
+// GetFilesTotal returns the total file (inode) count (FATTR4_FILES_TOTAL).
+func (a *Attributes) GetFilesTotal() (uint64, bool) {
+	return a.filesTotal, a.fieldsPresent&AttributesMaskFilesTotal != 0
+}
+
+// SetFilesTotal sets the total file (inode) count.
+func (a *Attributes) SetFilesTotal(v uint64) *Attributes {
+	a.filesTotal = v
+	a.fieldsPresent |= AttributesMaskFilesTotal
+	return a
+}
+
+// GetFilesFree returns the free file (inode) count (FATTR4_FILES_FREE).
+func (a *Attributes) GetFilesFree() (uint64, bool) {
+	return a.filesFree, a.fieldsPresent&AttributesMaskFilesFree != 0
+}
+
+// SetFilesFree sets the free file (inode) count.
+func (a *Attributes) SetFilesFree(v uint64) *Attributes {
+	a.filesFree = v
+	a.fieldsPresent |= AttributesMaskFilesFree
+	return a
+}
+
+// GetFilesAvail returns the file count available to the user (FATTR4_FILES_AVAIL).
+func (a *Attributes) GetFilesAvail() (uint64, bool) {
+	return a.filesAvail, a.fieldsPresent&AttributesMaskFilesAvail != 0
+}
+
+// SetFilesAvail sets the file count available to the user.
+func (a *Attributes) SetFilesAvail(v uint64) *Attributes {
+	a.filesAvail = v
+	a.fieldsPresent |= AttributesMaskFilesAvail
 	return a
 }
 

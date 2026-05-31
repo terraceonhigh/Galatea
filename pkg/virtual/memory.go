@@ -100,6 +100,42 @@ func childOf(n Node) DirectoryChild {
 
 // --- memoryFile: a writable regular file ----------------------------------
 
+// Synthetic filesystem-wide statfs values for the in-memory FSAL. Deliberately
+// distinct so a SETATTR/GETATTR round-trip test can assert each lands in its own
+// slot (no cross-wiring), and large enough that tools see a real, writable volume.
+const (
+	memSpaceTotal = uint64(1) << 30 // 1 GiB
+	memSpaceFree  = uint64(1) << 29 // 512 MiB
+	memSpaceAvail = uint64(1) << 28 // 256 MiB
+	memFilesTotal = uint64(1_000_000)
+	memFilesFree  = uint64(600_000)
+	memFilesAvail = uint64(500_000)
+)
+
+// fillSyntheticStatfs answers the filesystem-wide space/inode attributes for the
+// in-memory FSAL. Shared by memoryFile and memoryDirectory (statfs is per-fs, so
+// every node reports the same values).
+func fillSyntheticStatfs(requested AttributesMask, a *Attributes) {
+	if requested&AttributesMaskSpaceTotal != 0 {
+		a.SetSpaceTotal(memSpaceTotal)
+	}
+	if requested&AttributesMaskSpaceFree != 0 {
+		a.SetSpaceFree(memSpaceFree)
+	}
+	if requested&AttributesMaskSpaceAvail != 0 {
+		a.SetSpaceAvail(memSpaceAvail)
+	}
+	if requested&AttributesMaskFilesTotal != 0 {
+		a.SetFilesTotal(memFilesTotal)
+	}
+	if requested&AttributesMaskFilesFree != 0 {
+		a.SetFilesFree(memFilesFree)
+	}
+	if requested&AttributesMaskFilesAvail != 0 {
+		a.SetFilesAvail(memFilesAvail)
+	}
+}
+
 // memoryFile is an in-memory regular file. Its contents and size are mutable
 // (R6 write path); a per-file mutex serializes reads, writes, truncations, and
 // attribute reads of this file. Directory structure is a separate concern (the
@@ -166,6 +202,7 @@ func (f *memoryFile) fillAttributes(requested AttributesMask, a *Attributes) {
 	if requested&AttributesMaskLastAccessTime != 0 && !f.atime.IsZero() {
 		a.SetLastAccessTime(f.atime)
 	}
+	fillSyntheticStatfs(requested, a)
 }
 
 func (f *memoryFile) VirtualGetAttributes(ctx context.Context, requested AttributesMask, attributes *Attributes) {
@@ -368,6 +405,7 @@ func (d *memoryDirectory) fillAttributes(requested AttributesMask, a *Attributes
 	if requested&AttributesMaskLastAccessTime != 0 && !d.atime.IsZero() {
 		a.SetLastAccessTime(d.atime)
 	}
+	fillSyntheticStatfs(requested, a)
 }
 
 func (d *memoryDirectory) VirtualGetAttributes(ctx context.Context, requested AttributesMask, attributes *Attributes) {

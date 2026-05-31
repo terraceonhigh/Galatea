@@ -29,6 +29,7 @@ package main
 #include <errno.h>
 #include <time.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 
 // Trampolines: cgo cannot invoke a runtime-supplied function pointer directly,
 // so these tiny C shims call the app's ops. All calls are serialised by the
@@ -116,6 +117,13 @@ static int call_utimens(const struct fuse_operations *op, const char *path,
 	if (set_mtime) { tv[1].tv_sec = mt_sec; tv[1].tv_nsec = mt_nsec; }
 	else           { tv[1].tv_sec = 0;      tv[1].tv_nsec = UTIME_OMIT; }
 	return op->utimens(path, tv);
+}
+
+// --- statfs (df / free space) ---
+static int has_statfs(const struct fuse_operations *op) { return op->statfs != NULL; }
+static int call_statfs(const struct fuse_operations *op, const char *path, struct statvfs *st) {
+	if (!op->statfs) return -ENOSYS;
+	return op->statfs(path, st);
 }
 
 // --- lifecycle: init / destroy ---
@@ -316,6 +324,54 @@ func (c *fuseConn) readlink(p string) (string, bool) {
 	return string(buf[:n]), true
 }
 
+// statfsMask is the set of filesystem-wide space/inode attributes serviced by
+// op->statfs. Any node's getattr that requests one triggers a single statfs.
+const statfsMask = virtual.AttributesMaskSpaceTotal | virtual.AttributesMaskSpaceFree |
+	virtual.AttributesMaskSpaceAvail | virtual.AttributesMaskFilesTotal |
+	virtual.AttributesMaskFilesFree | virtual.AttributesMaskFilesAvail
+
+// fillStatfs answers the requested space/inode attributes by calling the app's
+// statfs and converting statvfs blocks→bytes (space) / counts (files). A backend
+// without statfs (or that errors) leaves them unset — df then shows what it shows.
+func (c *fuseConn) fillStatfs(p string, requested virtual.AttributesMask, a *virtual.Attributes) {
+	if requested&statfsMask == 0 {
+		return
+	}
+	cp := C.CString(p)
+	defer C.free(unsafe.Pointer(cp))
+	var st C.struct_statvfs
+	c.mu.Lock()
+	r := C.call_statfs(c.op, cp, &st)
+	c.mu.Unlock()
+	if r < 0 {
+		return
+	}
+	// f_frsize is the fundamental block size that f_blocks/f_bfree/f_bavail are
+	// counted in (f_bsize is the preferred I/O size); fall back to f_bsize if 0.
+	frsize := uint64(st.f_frsize)
+	if frsize == 0 {
+		frsize = uint64(st.f_bsize)
+	}
+	if requested&virtual.AttributesMaskSpaceTotal != 0 {
+		a.SetSpaceTotal(uint64(st.f_blocks) * frsize)
+	}
+	if requested&virtual.AttributesMaskSpaceFree != 0 {
+		a.SetSpaceFree(uint64(st.f_bfree) * frsize)
+	}
+	if requested&virtual.AttributesMaskSpaceAvail != 0 {
+		a.SetSpaceAvail(uint64(st.f_bavail) * frsize)
+	}
+	if requested&virtual.AttributesMaskFilesTotal != 0 {
+		a.SetFilesTotal(uint64(st.f_files))
+	}
+	if requested&virtual.AttributesMaskFilesFree != 0 {
+		a.SetFilesFree(uint64(st.f_ffree))
+	}
+	if requested&virtual.AttributesMaskFilesAvail != 0 {
+		a.SetFilesAvail(uint64(st.f_favail))
+	}
+}
+
 // resolveHandle decodes a path-based file handle (the node's absolute FUSE
 // path), verifies it via getattr, and returns the node.
 func (c *fuseConn) resolveHandle(r io.ByteReader) (virtual.DirectoryChild, virtual.Status) {
@@ -495,6 +551,7 @@ func (d *fuseDir) VirtualGetAttributes(ctx context.Context, requested virtual.At
 		return
 	}
 	statToAttrs(&st, d.path, requested, a)
+	d.conn.fillStatfs(d.path, requested, a) // df/statfs (filesystem-wide)
 }
 
 func (d *fuseDir) VirtualLookup(ctx context.Context, name virtual.Component, requested virtual.AttributesMask, out *virtual.Attributes) (virtual.DirectoryChild, virtual.Status) {
@@ -733,6 +790,7 @@ func (f *fuseFile) VirtualGetAttributes(ctx context.Context, requested virtual.A
 			a.SetSymlinkTarget(vpath.UNIXFormat.NewParser(target))
 		}
 	}
+	f.conn.fillStatfs(f.path, requested, a) // df/statfs (filesystem-wide)
 }
 
 func (f *fuseFile) VirtualOpenSelf(ctx context.Context, shareAccess virtual.ShareMask, options *virtual.OpenExistingOptions, requested virtual.AttributesMask, a *virtual.Attributes) virtual.Status {

@@ -131,6 +131,15 @@ else
   echo "  INFO: plain touch left mtime unchanged — macOS likely sends SET_TO_SERVER_TIME (unimplemented by design; the expected gap)"
 fi
 
+# 8. statfs: df reports real capacity (was "0 0 0 100%" before the SPACE_* lift).
+DFLINE="$(df -k "$MNT" 2>/dev/null | tail -1)"
+DFTOTAL="$(echo "$DFLINE" | awk '{print $2}')"
+if [ -n "$DFTOTAL" ] && [ "$DFTOTAL" -gt 0 ] 2>/dev/null; then
+  ok "df reports nonzero capacity (${DFTOTAL} KB total)"
+else
+  bad "df total = '$DFTOTAL' (want > 0); line: $DFLINE"
+fi
+
 # --- verdict -----------------------------------------------------------------
 echo "--- result: $PASS passed, $FAIL failed ---"
 [ "$FAIL" = 0 ]

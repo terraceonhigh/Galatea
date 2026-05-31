@@ -294,6 +294,57 @@ func TestConformanceSetattrMtime(t *testing.T) {
 	}
 }
 
+// TestConformanceStatfs drives a GETATTR for the filesystem-wide space/inode
+// attributes (FILES_AVAIL/FREE/TOTAL in word0; SPACE_AVAIL/FREE/TOTAL in word1)
+// over the wire and asserts each of the in-memory FSAL's six DISTINCT synthetic
+// values lands in its own slot — proving the encoder writes them in correct
+// ascending-bit order across both attrmask words and nothing is cross-wired.
+// This is the headless tier for statfs/df; the live `df` check is in
+// run-a1-live.sh.
+func TestConformanceStatfs(t *testing.T) {
+	program := writableTestProgram()
+	getRes := doCompound(t, program,
+		&nfsv4.NfsArgop4_OP_PUTROOTFH{},
+		&nfsv4.NfsArgop4_OP_GETATTR{Opgetattr: nfsv4.Getattr4args{
+			AttrRequest: []uint32{
+				(1 << nfsv4.FATTR4_FILES_AVAIL) | (1 << nfsv4.FATTR4_FILES_FREE) | (1 << nfsv4.FATTR4_FILES_TOTAL),
+				(1 << (nfsv4.FATTR4_SPACE_AVAIL - 32)) | (1 << (nfsv4.FATTR4_SPACE_FREE - 32)) | (1 << (nfsv4.FATTR4_SPACE_TOTAL - 32)),
+			}}},
+	)
+	if getRes.Status != nfsv4.NFS4_OK {
+		t.Fatalf("GETATTR statfs: status = %v, want NFS4_OK", getRes.Status)
+	}
+	fa := getRes.Resarray[1].(*nfsv4.NfsResop4_OP_GETATTR).Opgetattr.(*nfsv4.Getattr4res_NFS4_OK).Resok4.ObjAttributes
+	r := bytes.NewReader(fa.AttrVals)
+	var w0, w1 uint32
+	if len(fa.Attrmask) > 0 {
+		w0 = fa.Attrmask[0]
+	}
+	if len(fa.Attrmask) > 1 {
+		w1 = fa.Attrmask[1]
+	}
+	readU64 := func(name string, present bool, want uint64) {
+		if !present {
+			t.Fatalf("read-back fattr4 missing %s", name)
+		}
+		got, _, err := nfsv4.ReadUint64T(r)
+		if err != nil {
+			t.Fatalf("decode %s: %v", name, err)
+		}
+		if got != want {
+			t.Errorf("%s = %d, want %d", name, got, want)
+		}
+	}
+	// Positional decode: word0 ascending (FILES_AVAIL 21, FREE 22, TOTAL 23),
+	// then word1 ascending (SPACE_AVAIL 42, FREE 43, TOTAL 44). Distinct values.
+	readU64("files_avail", w0&(1<<nfsv4.FATTR4_FILES_AVAIL) != 0, 500_000)
+	readU64("files_free", w0&(1<<nfsv4.FATTR4_FILES_FREE) != 0, 600_000)
+	readU64("files_total", w0&(1<<nfsv4.FATTR4_FILES_TOTAL) != 0, 1_000_000)
+	readU64("space_avail", w1&(1<<(nfsv4.FATTR4_SPACE_AVAIL-32)) != 0, 1<<28)
+	readU64("space_free", w1&(1<<(nfsv4.FATTR4_SPACE_FREE-32)) != 0, 1<<29)
+	readU64("space_total", w1&(1<<(nfsv4.FATTR4_SPACE_TOTAL-32)) != 0, 1<<30)
+}
+
 func TestConformanceRemove(t *testing.T) {
 	program := writableTestProgram()
 	if res := doCompound(t, program,

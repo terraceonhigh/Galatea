@@ -19,6 +19,7 @@ package main
 #include <dirent.h>
 #include <stdio.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <time.h>
 
 // --- fixed read-only hello tree (1a) ---
@@ -124,6 +125,10 @@ static int pt_utimens(const char *path, const struct timespec tv[2]) {
 	char p[2048]; pt_full(path, p, sizeof(p));
 	return utimensat(AT_FDCWD, p, tv, 0) == 0 ? 0 : -errno;
 }
+static int pt_statfs(const char *path, struct statvfs *st) {
+	char p[2048]; pt_full(path, p, sizeof(p));
+	return statvfs(p, st) == 0 ? 0 : -errno;
+}
 
 static struct fuse_operations pt_ops;
 static struct fuse_operations *make_passthrough_ops(void) {
@@ -132,7 +137,7 @@ static struct fuse_operations *make_passthrough_ops(void) {
 	pt_ops.write = pt_write; pt_ops.mknod = pt_mknod; pt_ops.mkdir = pt_mkdir; pt_ops.unlink = pt_unlink;
 	pt_ops.rmdir = pt_rmdir; pt_ops.rename = pt_rename; pt_ops.truncate = pt_truncate; pt_ops.chmod = pt_chmod;
 	pt_ops.symlink = pt_symlink; pt_ops.readlink = pt_readlink; pt_ops.link = pt_link;
-	pt_ops.utimens = pt_utimens;
+	pt_ops.utimens = pt_utimens; pt_ops.statfs = pt_statfs;
 	return &pt_ops;
 }
 */
