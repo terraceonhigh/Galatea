@@ -3251,9 +3251,13 @@ func fattr4ToAttributes(in *nfsv4.Fattr4, out *virtual.Attributes) nfsv4.Nfsstat
 		if f&^((1<<(nfsv4.FATTR4_MODE-32))|
 			(1<<(nfsv4.FATTR4_OWNER-32))|
 			(1<<(nfsv4.FATTR4_OWNER_GROUP-32))|
+			(1<<(nfsv4.FATTR4_TIME_ACCESS_SET-32))|
 			(1<<(nfsv4.FATTR4_TIME_MODIFY_SET-32))) != 0 {
 			return nfsv4.NFS4ERR_ATTRNOTSUPP
 		}
+		// Fields are read positionally in ascending FATTR4 order: MODE(33),
+		// then (OWNER 36 / OWNER_GROUP 37, rejected), TIME_ACCESS_SET(48),
+		// TIME_MODIFY_SET(54).
 		if f&(1<<(nfsv4.FATTR4_MODE-32)) != 0 {
 			mode, _, err := nfsv4.ReadMode4(r)
 			if err != nil {
@@ -3263,6 +3267,18 @@ func fattr4ToAttributes(in *nfsv4.Fattr4, out *virtual.Attributes) nfsv4.Nfsstat
 		}
 		if f&((1<<(nfsv4.FATTR4_OWNER-32))|(1<<(nfsv4.FATTR4_OWNER_GROUP-32))) != 0 {
 			return nfsv4.NFS4ERR_PERM
+		}
+		// FATTR4_TIME_ACCESS_SET (48): `touch` (and `touch -t`) sets atime AND
+		// mtime, so the macOS client sends this alongside TIME_MODIFY_SET. We
+		// have no atime in virtual.Attributes (noatime-style), so we ACCEPT and
+		// CONSUME its settime4 — both to keep the positional decode in sync for
+		// the mtime that follows, and so the whole SETATTR doesn't fail
+		// ATTRNOTSUPP (which a lenient client swallows, silently dropping the
+		// mtime too). atime itself is not applied; storing it is a follow-on.
+		if f&(1<<(nfsv4.FATTR4_TIME_ACCESS_SET-32)) != 0 {
+			if _, _, err := nfsv4.ReadSettime4(r); err != nil {
+				return nfsv4.NFS4ERR_BADXDR
+			}
 		}
 		// FATTR4_TIME_MODIFY_SET (54) is the *writable* mtime (a settime4); the
 		// read-only FATTR4_TIME_MODIFY (53) is never sent in SETATTR. tools like

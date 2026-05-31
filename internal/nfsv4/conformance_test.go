@@ -193,18 +193,28 @@ func TestConformanceSetattrMtime(t *testing.T) {
 
 	// Build the SETATTR fattr4 by hand: MODE(33) then TIME_MODIFY_SET(54), in
 	// ascending order, both in attrmask word 1.
+	// Mirror what macOS `touch` actually sends: MODE(33) + TIME_ACCESS_SET(48) +
+	// TIME_MODIFY_SET(54), in ascending order. The atime is set to a DISTINCT
+	// value (2020) from the mtime (2023) so the read-back proves the decoder
+	// applied the *mtime* field, not the atime — i.e. the positional decode of
+	// two adjacent settime4 fields stayed in sync. atime is accepted+consumed but
+	// not stored (noatime-style), so it must not leak into mtime.
 	// 0o555 (r-x, no write) is distinct from the writable dir's 0o777 default and
-	// round-trips cleanly through this FSAL's single-user Permissions model
-	// (one rwx triple, no owner/group/all split) — so a changed mode here proves
-	// MODE was decoded *before* the time field, not just that the buffer parsed.
+	// round-trips cleanly through this FSAL's single-user Permissions model.
+	atimeNT := timeToNfstime4(time.Unix(1600000000, 0)) // 2020 — distinct from want
 	var av bytes.Buffer
 	if _, err := nfsv4.WriteMode4(&av, 0o555); err != nil {
 		t.Fatalf("encode mode: %v", err)
 	}
-	if _, err := (&nfsv4.Settime4_SET_TO_CLIENT_TIME4{Time: wantNT}).WriteTo(&av); err != nil {
-		t.Fatalf("encode settime: %v", err)
+	if _, err := (&nfsv4.Settime4_SET_TO_CLIENT_TIME4{Time: atimeNT}).WriteTo(&av); err != nil {
+		t.Fatalf("encode time_access_set: %v", err)
 	}
-	setMask := []uint32{0, (1 << (nfsv4.FATTR4_MODE - 32)) | (1 << (nfsv4.FATTR4_TIME_MODIFY_SET - 32))}
+	if _, err := (&nfsv4.Settime4_SET_TO_CLIENT_TIME4{Time: wantNT}).WriteTo(&av); err != nil {
+		t.Fatalf("encode time_modify_set: %v", err)
+	}
+	setMask := []uint32{0, (1 << (nfsv4.FATTR4_MODE - 32)) |
+		(1 << (nfsv4.FATTR4_TIME_ACCESS_SET - 32)) |
+		(1 << (nfsv4.FATTR4_TIME_MODIFY_SET - 32))}
 
 	// CREATE dir "d"; after CREATE the current filehandle IS the new dir, so the
 	// SETATTR in the same COMPOUND targets it. The all-zeros (anonymous) stateid
