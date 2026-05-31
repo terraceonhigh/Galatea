@@ -20,11 +20,25 @@ code. Phases are dependency-ordered; **Phase L gates everything commercial.**
 
 ---
 
-## Phase L — License-clean the base  ⛔ MANDATORY GATE
+## Phase L — License-clean the base  ⛔ MANDATORY before the first commercial *delivery* — but DEFERRED
 
-Nothing commercial can ship until this is done. The dylib today links **LGPL**
-code (`shim/libfuse/fuse_opt.c`, vendored from libfuse) and compiles against LGPL
-headers. **You cannot grant a proprietary license over code you don't own.**
+**Sequencing (decided 2026-05-30): do the feature phases first; execute Phase L
+when a commercial deal is imminent.** Rationale: the vendored **LGPL**
+`fuse_opt.c` is *fully compatible inside the GPLv3 open project* — there is no
+license problem today, and the open product ships correctly as-is. The LGPL only
+blocks the *commercial* grant, which matters only at the moment you hand a
+closed-source shipper a dylib. So Phase L gates the first commercial **delivery**,
+not feature work and not marketing the dual-license (a `COMMERCIAL.md` "contact
+us" can go out anytime). The reimplementation is well-understood and low-risk to
+defer; the feature phases below add only our own code (Apache core + ours), so
+they don't grow this purge.
+
+When Phase L *is* done: the dylib today links **LGPL** code (`shim/libfuse/
+fuse_opt.c`) and compiles against LGPL headers — **you cannot grant a proprietary
+license over code you don't own.** Clean-room hygiene: write the replacement from
+the documented behavior + our own tests, not by transcribing the LGPL source the
+tree has carried (knowing the *shape* is fine; the *expression* must be ours).
+Keep the LGPL quarantined and labelled (VENDOR.md already does) until then.
 
 - **L1 — Reimplement `fuse_opt`.** A clean-room option parser
   (`fuse_opt_parse`/`match`/`add_arg`/`insert_arg`/`add_opt`/`free_args`) matching
@@ -110,10 +124,13 @@ Many current tools (today's sshfs, newer fs's) are fuse3, not 2.x.
 
 ## Minimum-viable vs. full
 
-- **Minimum sellable:** **Phase L (mandatory)** + the common subset of **A** +
-  **M** + **D1**. A macOS dev can link it, ship a real volume, and you can
-  commercially license it. fuse3 (Phase 3), full xattrs (A2), and full open-state
-  (S) follow as the market asks. **Rough envelope: ~6–10 focused weeks.**
+- **Build order:** the feature phases first (common subset of **A** + **M** +
+  **D1**), then **Phase L** executed at the first commercial delivery — it's the
+  gate on *selling closed*, not on building or marketing. A macOS dev can link the
+  GPL build the whole time; the commercial grant becomes deliverable once L lands.
+  fuse3 (Phase 3), full xattrs (A2), and full open-state (S) follow as the market
+  asks. **Rough envelope to minimum-sellable: ~6–10 focused weeks** (L's ~2 are
+  spent last, when a buyer is real).
 - **Full FUSE-T parity:** all phases incl. Phase 3 and the macOS extensions.
   **~3–4 months.**
 

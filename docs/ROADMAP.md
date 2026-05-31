@@ -148,9 +148,10 @@ FOSS, a paid commercial grant for those shipping closed). The full code roadmap 
 the mandatory LGPL purge that makes a commercial grant possible, then the op
 coverage / open-state / mount-daemon / fuse3 / packaging breadth that makes it
 worth paying for — is in [`DUAL-LICENSE-ROADMAP.md`](DUAL-LICENSE-ROADMAP.md).
-**Gate (Phase L, mandatory first):** reimplement `fuse_opt` + own headers so the
-shipped dylib contains no copyleft we don't own. Minimum sellable ≈ 6–10 wks; full
-FUSE-T parity ≈ 3–4 months.
+**Sequencing (2026-05-30):** feature phases (A/S/M/3/D) first; **Phase L** (purge
+the LGPL — reimplement `fuse_opt` + own headers) is **deferred to the first
+commercial delivery** — LGPL is fine inside the GPL open project, and only blocks
+the commercial grant. Minimum sellable ≈ 6–10 wks; full FUSE-T parity ≈ 3–4 months.
 
 ---
 
