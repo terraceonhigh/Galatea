@@ -120,6 +120,16 @@ reuse *upstream* libfuse, not FUSE-T's closed bridge.
 
 - **Marquee (the launch):** unmodified **`sshfs`** (or `rclone mount`) mounting
   read-write through `libfuse.dylib`. That screenshot is what takes FUSE-T's users.
+  - **Status 2026-05-31 — one or two gates away.** The shim now implements the
+    **low-level libfuse 2.x API** (`fuse_parse_cmdline`/`fuse_mount`/`fuse_new`/
+    `fuse_get_session`/`fuse_set_signal_handlers`/`fuse_daemonize`/`fuse_loop[_mt]`/
+    `fuse_unmount`/`fuse_destroy`) in `shim/libfuse/lowlevel.c` over the same serve
+    body as `fuse_main_real` — because real tools take that path, not `fuse_main`.
+    **sshfs 2.10 builds, links `libgalateafuse.dylib`, and loads it**; the
+    low-level path is proven **11/11** via a low-level fixture (`GALATEA_PT_LOWLEVEL=1
+    run-a1-live.sh`). Remaining for the live sshfs screenshot: passwordless SSH to
+    localhost, and a cage-blessed way to run the harness (petition open at
+    `~/Labs/Narthex`, awaiting the Verger). Commit `b20d616`.
 - **Long tail (incremental, months):** full op coverage, the low-level API
   (`fuse_lowlevel_ops`), xattrs, the macFUSE macOS extensions, then FUSE 3.x as a
   separate ABI. Driven by which real apps we want to claim.
