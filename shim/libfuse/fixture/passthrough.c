@@ -65,10 +65,29 @@ static int pt_rename(const char *from, const char *to) {
 static int pt_truncate(const char *path, off_t size) { char p[2048]; full(path, p, sizeof(p)); return truncate(p, size) == 0 ? 0 : -errno; }
 static int pt_chmod(const char *path, mode_t mode) { char p[2048]; full(path, p, sizeof(p)); return chmod(p, mode) == 0 ? 0 : -errno; }
 
+/* A1 structural ops — symlink / readlink / link. The target is stored verbatim
+ * (it may be relative to the link); only the link path is rooted under g_root. */
+static int pt_symlink(const char *target, const char *path) {
+	char p[2048]; full(path, p, sizeof(p));
+	return symlink(target, p) == 0 ? 0 : -errno;
+}
+static int pt_readlink(const char *path, char *buf, size_t size) {
+	char p[2048]; full(path, p, sizeof(p));
+	ssize_t n = readlink(p, buf, size - 1);
+	if (n < 0) return -errno;
+	buf[n] = 0; /* libfuse contract: NUL-terminate, return 0 (not the length) */
+	return 0;
+}
+static int pt_link(const char *from, const char *to) {
+	char pf[2048], pt[2048]; full(from, pf, sizeof(pf)); full(to, pt, sizeof(pt));
+	return link(pf, pt) == 0 ? 0 : -errno;
+}
+
 static struct fuse_operations pt_ops = {
 	.getattr = pt_getattr, .readdir = pt_readdir, .open = pt_open, .read = pt_read,
 	.write = pt_write, .mknod = pt_mknod, .mkdir = pt_mkdir, .unlink = pt_unlink,
 	.rmdir = pt_rmdir, .rename = pt_rename, .truncate = pt_truncate, .chmod = pt_chmod,
+	.symlink = pt_symlink, .readlink = pt_readlink, .link = pt_link,
 };
 
 int main(int argc, char *argv[]) {
