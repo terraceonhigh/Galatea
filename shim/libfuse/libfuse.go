@@ -27,6 +27,8 @@ package main
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <time.h>
+#include <sys/stat.h>
 
 // Trampolines: cgo cannot invoke a runtime-supplied function pointer directly,
 // so these tiny C shims call the app's ops. All calls are serialised by the
@@ -99,6 +101,17 @@ static int has_link(const struct fuse_operations *op) { return op->link != NULL;
 static int call_link(const struct fuse_operations *op, const char *from, const char *to) {
 	if (!op->link) return -ENOSYS;
 	return op->link(from, to);
+}
+
+// --- A1 time op: utimens. We only carry mtime (the FSAL has no atime), so
+// atime is UTIME_OMIT — "leave unchanged" — and only mtime is set. ---
+static int has_utimens(const struct fuse_operations *op) { return op->utimens != NULL; }
+static int call_utimens(const struct fuse_operations *op, const char *path, long mt_sec, long mt_nsec) {
+	if (!op->utimens) return -ENOSYS;
+	struct timespec tv[2];
+	tv[0].tv_sec = 0; tv[0].tv_nsec = UTIME_OMIT;       // atime: unchanged
+	tv[1].tv_sec = mt_sec; tv[1].tv_nsec = mt_nsec;     // mtime: set
+	return op->utimens(path, tv);
 }
 
 // --- lifecycle: init / destroy ---
@@ -175,6 +188,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	vpath "github.com/terraceonhigh/galatea/internal/bb/filesystem/path"
@@ -440,6 +454,13 @@ func statToAttrs(st *C.struct_stat, p string, requested virtual.AttributesMask, 
 	}
 	if requested&virtual.AttributesMaskChangeID != 0 {
 		a.SetChangeID(fileid)
+	}
+	if requested&virtual.AttributesMaskLastDataModificationTime != 0 {
+		// macOS struct stat carries the mtime as st_mtimespec (the POSIX
+		// st_mtime is a macro over its tv_sec). Surfacing it lets a `touch`
+		// (SETATTR→op->utimens) round-trip back through getattr to `ls -l`.
+		mt := st.st_mtimespec
+		a.SetLastDataModificationTime(time.Unix(int64(mt.tv_sec), int64(mt.tv_nsec)))
 	}
 }
 
@@ -783,6 +804,16 @@ func (f *fuseFile) VirtualSetAttributes(ctx context.Context, in *virtual.Attribu
 	if perms, ok := in.GetPermissions(); ok {
 		f.conn.mu.Lock()
 		r := C.call_chmod(f.conn.op, cp, C.uint(perms.ToMode()))
+		f.conn.mu.Unlock()
+		if r < 0 {
+			return errStatus(r)
+		}
+	}
+	if mtime, ok := in.GetLastDataModificationTime(); ok {
+		// SETATTR time_modify_set → op->utimens (mtime only; atime is UTIME_OMIT
+		// in the trampoline, since the FSAL carries no atime).
+		f.conn.mu.Lock()
+		r := C.call_utimens(f.conn.op, cp, C.long(mtime.Unix()), C.long(mtime.Nanosecond()))
 		f.conn.mu.Unlock()
 		if r < 0 {
 			return errStatus(r)

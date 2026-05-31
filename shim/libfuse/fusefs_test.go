@@ -7,6 +7,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	vpath "github.com/terraceonhigh/galatea/internal/bb/filesystem/path"
 	"github.com/terraceonhigh/galatea/pkg/virtual"
@@ -263,5 +264,49 @@ func TestFuseFSLinks(t *testing.T) {
 	otherRoot, _ := NewFuseRoot(passthroughOps(other))
 	if _, st := otherRoot.(*fuseDir).VirtualLink(ctx, virtual.MustNewComponent("x"), target, 0, &virtual.Attributes{}); st != virtual.StatusErrXDev {
 		t.Fatalf("cross-conn link: status=%v (want XDev)", st)
+	}
+}
+
+// TestFuseFSUtimens covers the utimens half of the time-attribute lift:
+// VirtualSetAttributes carrying an mtime → op->utimens, with the effect landing
+// on the host file and round-tripping back through getattr (st_mtimespec →
+// AttributesMaskLastDataModificationTime). atime is UTIME_OMIT (the FSAL has no
+// atime). The server-side decode of time_modify_set is proven separately by
+// TestConformanceSetattrMtime; this proves the shim translation.
+func TestFuseFSUtimens(t *testing.T) {
+	root := t.TempDir()
+	fsRoot, _ := NewFuseRoot(passthroughOps(root))
+	ctx := context.Background()
+
+	createAttrs := &virtual.Attributes{}
+	createAttrs.SetPermissions(virtual.PermissionsRead | virtual.PermissionsWrite)
+	leaf, _, _, st := fsRoot.VirtualOpenChild(ctx, virtual.MustNewComponent("t.txt"),
+		virtual.ShareMaskWrite, createAttrs, &virtual.OpenExistingOptions{}, 0, &virtual.Attributes{})
+	if st != virtual.StatusOK || leaf == nil {
+		t.Fatalf("create t.txt: %v", st)
+	}
+
+	want := time.Unix(1700000000, 0)
+	in := &virtual.Attributes{}
+	in.SetLastDataModificationTime(want)
+	if st := leaf.VirtualSetAttributes(ctx, in, 0, &virtual.Attributes{}); st != virtual.StatusOK {
+		t.Fatalf("setattr mtime: %v", st)
+	}
+
+	// effect on the host file
+	fi, err := os.Stat(filepath.Join(root, "t.txt"))
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if fi.ModTime().Unix() != want.Unix() {
+		t.Fatalf("host mtime = %d, want %d", fi.ModTime().Unix(), want.Unix())
+	}
+
+	// round-trips back through getattr
+	var ra virtual.Attributes
+	leaf.VirtualGetAttributes(ctx, virtual.AttributesMaskLastDataModificationTime, &ra)
+	got, ok := ra.GetLastDataModificationTime()
+	if !ok || got.Unix() != want.Unix() {
+		t.Fatalf("getattr mtime = %d ok=%v, want %d", got.Unix(), ok, want.Unix())
 	}
 }

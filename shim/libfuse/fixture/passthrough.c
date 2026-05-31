@@ -21,6 +21,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <sys/stat.h>
+#include <time.h>
 
 static char g_root[1024];
 static void full(const char *path, char *out, size_t n) { snprintf(out, n, "%s%s", g_root, path); }
@@ -82,12 +84,16 @@ static int pt_link(const char *from, const char *to) {
 	char pf[2048], pt[2048]; full(from, pf, sizeof(pf)); full(to, pt, sizeof(pt));
 	return link(pf, pt) == 0 ? 0 : -errno;
 }
+static int pt_utimens(const char *path, const struct timespec tv[2]) {
+	char p[2048]; full(path, p, sizeof(p));
+	return utimensat(AT_FDCWD, p, tv, 0) == 0 ? 0 : -errno;
+}
 
 static struct fuse_operations pt_ops = {
 	.getattr = pt_getattr, .readdir = pt_readdir, .open = pt_open, .read = pt_read,
 	.write = pt_write, .mknod = pt_mknod, .mkdir = pt_mkdir, .unlink = pt_unlink,
 	.rmdir = pt_rmdir, .rename = pt_rename, .truncate = pt_truncate, .chmod = pt_chmod,
-	.symlink = pt_symlink, .readlink = pt_readlink, .link = pt_link,
+	.symlink = pt_symlink, .readlink = pt_readlink, .link = pt_link, .utimens = pt_utimens,
 };
 
 int main(int argc, char *argv[]) {
