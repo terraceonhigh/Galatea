@@ -83,6 +83,24 @@ static int call_chmod(const struct fuse_operations *op, const char *path, unsign
 	return op->chmod(path, (mode_t)mode);
 }
 
+// --- A1 structural ops: symlink / readlink / link ---
+static int has_symlink(const struct fuse_operations *op) { return op->symlink != NULL; }
+static int call_symlink(const struct fuse_operations *op, const char *target, const char *path) {
+	if (!op->symlink) return -ENOSYS;
+	return op->symlink(target, path);
+}
+// readlink: libfuse fills buf with a NUL-terminated target and returns 0 on
+// success (NOT the length). buf must be at least `size` bytes; truncated if long.
+static int call_readlink(const struct fuse_operations *op, const char *path, char *buf, size_t size) {
+	if (!op->readlink) return -ENOSYS;
+	return op->readlink(path, buf, size);
+}
+static int has_link(const struct fuse_operations *op) { return op->link != NULL; }
+static int call_link(const struct fuse_operations *op, const char *from, const char *to) {
+	if (!op->link) return -ENOSYS;
+	return op->link(from, to);
+}
+
 // --- lifecycle: init / destroy ---
 // libfuse calls init() once before any operation; many filesystems (cgofuse's
 // included) do their setup there, and init's return value becomes private_data.
@@ -159,11 +177,28 @@ import (
 	"syscall"
 	"unsafe"
 
+	vpath "github.com/terraceonhigh/galatea/internal/bb/filesystem/path"
 	nfssrv "github.com/terraceonhigh/galatea/internal/nfsv4"
 	nfsproto "github.com/terraceonhigh/galatea/internal/xdr/pkg/protocols/nfsv4"
 	"github.com/terraceonhigh/galatea/internal/xdr/pkg/rpcserver"
 	"github.com/terraceonhigh/galatea/pkg/virtual"
 )
+
+// parserToString resolves a virtual.Parser (a path) back to its UNIX string
+// form — the same Resolve+GetString round-trip the server uses to render
+// READLINK responses (pathParserToLinktext4). Used to extract a symlink target
+// from the parser the server hands VirtualSymlink.
+func parserToString(p virtual.Parser) (string, bool) {
+	builder, scopeWalker := vpath.EmptyBuilder.Join(vpath.VoidScopeWalker)
+	if err := vpath.Resolve(p, scopeWalker); err != nil {
+		return "", false
+	}
+	s, err := vpath.UNIXFormat.GetString(builder)
+	if err != nil {
+		return "", false
+	}
+	return s, true
+}
 
 // fuseConn holds the app's operation table and serialises every call into it.
 type fuseConn struct {
@@ -240,6 +275,27 @@ func (c *fuseConn) readdir(p string) ([]string, virtual.Status) {
 		return nil, virtual.StatusErrIO
 	}
 	return names, virtual.StatusOK
+}
+
+// readlink calls the app's readlink under the lock and returns the target. The
+// libfuse contract: the app NUL-terminates buf and returns 0 on success, so we
+// read up to the first NUL (a fixed PATH_MAX-class buffer; longer targets are
+// truncated, matching the kernel FUSE behaviour).
+func (c *fuseConn) readlink(p string) (string, bool) {
+	cp := C.CString(p)
+	defer C.free(unsafe.Pointer(cp))
+	buf := make([]byte, 4096)
+	c.mu.Lock()
+	r := C.call_readlink(c.op, cp, (*C.char)(unsafe.Pointer(&buf[0])), C.size_t(len(buf)))
+	c.mu.Unlock()
+	if r < 0 {
+		return "", false
+	}
+	n := bytes.IndexByte(buf, 0)
+	if n < 0 {
+		n = len(buf)
+	}
+	return string(buf[:n]), true
 }
 
 // resolveHandle decodes a path-based file handle (the node's absolute FUSE
@@ -507,7 +563,29 @@ func (d *fuseDir) VirtualOpenNamedAttributes(ctx context.Context, createDirector
 	return nil, virtual.StatusErrNoEnt
 }
 func (d *fuseDir) VirtualLink(ctx context.Context, name virtual.Component, leaf virtual.Leaf, requested virtual.AttributesMask, a *virtual.Attributes) (virtual.ChangeInfo, virtual.Status) {
-	return virtual.ChangeInfo{}, virtual.StatusErrROFS
+	ci := virtual.ChangeInfo{}
+	// The source must be a leaf from this same connection; a hard link across
+	// filesystems is EXDEV, and a directory hard link is never allowed.
+	src, ok := leaf.(*fuseFile)
+	if !ok || src.conn != d.conn {
+		return ci, virtual.StatusErrXDev
+	}
+	newPath := path.Join(d.path, name.String())
+	cf := C.CString(src.path)
+	defer C.free(unsafe.Pointer(cf))
+	ct := C.CString(newPath)
+	defer C.free(unsafe.Pointer(ct))
+	d.conn.mu.Lock()
+	r := C.call_link(d.conn.op, cf, ct)
+	d.conn.mu.Unlock()
+	if st := errStatus(r); st != virtual.StatusOK {
+		return ci, st
+	}
+	if requested != 0 {
+		st2, _ := d.conn.getattr(newPath)
+		statToAttrs(&st2, newPath, requested, a)
+	}
+	return ci, virtual.StatusOK
 }
 func (d *fuseDir) VirtualMkdir(name virtual.Component, requested virtual.AttributesMask, a *virtual.Attributes) (virtual.Directory, virtual.ChangeInfo, virtual.Status) {
 	ci := virtual.ChangeInfo{}
@@ -568,7 +646,30 @@ func (d *fuseDir) VirtualRemove(name virtual.Component, removeDirectory, removeL
 	return ci, errStatus(C.call_unlink(d.conn.op, cp))
 }
 func (d *fuseDir) VirtualSymlink(ctx context.Context, pointedTo virtual.Parser, linkName virtual.Component, requested virtual.AttributesMask, a *virtual.Attributes) (virtual.Leaf, virtual.ChangeInfo, virtual.Status) {
-	return nil, virtual.ChangeInfo{}, virtual.StatusErrROFS
+	ci := virtual.ChangeInfo{}
+	target, ok := parserToString(pointedTo)
+	if !ok {
+		return nil, ci, virtual.StatusErrInval
+	}
+	linkPath := path.Join(d.path, linkName.String())
+	ct := C.CString(target)
+	defer C.free(unsafe.Pointer(ct))
+	cp := C.CString(linkPath)
+	defer C.free(unsafe.Pointer(cp))
+	d.conn.mu.Lock()
+	r := C.call_symlink(d.conn.op, ct, cp) // libfuse symlink(target, linkpath)
+	d.conn.mu.Unlock()
+	if st := errStatus(r); st != virtual.StatusOK {
+		return nil, ci, st
+	}
+	// opCreate(NF4LNK) reads the returned leaf's file handle back out of `a`
+	// (it requested AttributesMaskFileHandle), so the attributes must be filled
+	// — statToAttrs sets the handle from the path regardless of getattr success,
+	// which matters for a dangling symlink whose target does not exist.
+	leaf := &fuseFile{conn: d.conn, path: linkPath}
+	st2, _ := d.conn.getattr(linkPath)
+	statToAttrs(&st2, linkPath, requested, a)
+	return leaf, ci, virtual.StatusOK
 }
 
 // --- file -----------------------------------------------------------------
@@ -587,6 +688,15 @@ func (f *fuseFile) VirtualGetAttributes(ctx context.Context, requested virtual.A
 		return
 	}
 	statToAttrs(&st, f.path, requested, a)
+	// READLINK arrives as a GETATTR for the symlink-target attribute (the
+	// server's opReadLink asks for AttributesMaskSymlinkTarget). Resolve it via
+	// the app's readlink() only when the node is actually a symlink.
+	if requested&virtual.AttributesMaskSymlinkTarget != 0 &&
+		uint32(st.st_mode)&uint32(C.S_IFMT) == uint32(C.S_IFLNK) {
+		if target, ok := f.conn.readlink(f.path); ok {
+			a.SetSymlinkTarget(vpath.UNIXFormat.NewParser(target))
+		}
+	}
 }
 
 func (f *fuseFile) VirtualOpenSelf(ctx context.Context, shareAccess virtual.ShareMask, options *virtual.OpenExistingOptions, requested virtual.AttributesMask, a *virtual.Attributes) virtual.Status {

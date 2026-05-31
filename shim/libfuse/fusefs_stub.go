@@ -100,12 +100,32 @@ static int pt_rename(const char *from, const char *to) {
 static int pt_truncate(const char *path, off_t size) { char p[2048]; pt_full(path, p, sizeof(p)); return truncate(p, size) == 0 ? 0 : -errno; }
 static int pt_chmod(const char *path, mode_t mode) { char p[2048]; pt_full(path, p, sizeof(p)); return chmod(p, mode) == 0 ? 0 : -errno; }
 
+// --- A1 structural ops: symlink / readlink / link (real OS calls on pt_root) ---
+static int pt_symlink(const char *target, const char *path) {
+	// target is stored verbatim (it may be relative to the link); only the link
+	// path is rooted under pt_root.
+	char p[2048]; pt_full(path, p, sizeof(p));
+	return symlink(target, p) == 0 ? 0 : -errno;
+}
+static int pt_readlink(const char *path, char *buf, size_t size) {
+	char p[2048]; pt_full(path, p, sizeof(p));
+	ssize_t n = readlink(p, buf, size - 1);
+	if (n < 0) return -errno;
+	buf[n] = 0; // libfuse contract: NUL-terminate, return 0 (not the length)
+	return 0;
+}
+static int pt_link(const char *from, const char *to) {
+	char pf[2048], pt[2048]; pt_full(from, pf, sizeof(pf)); pt_full(to, pt, sizeof(pt));
+	return link(pf, pt) == 0 ? 0 : -errno;
+}
+
 static struct fuse_operations pt_ops;
 static struct fuse_operations *make_passthrough_ops(void) {
 	memset(&pt_ops, 0, sizeof(pt_ops));
 	pt_ops.getattr = pt_getattr; pt_ops.readdir = pt_readdir; pt_ops.open = pt_open; pt_ops.read = pt_read;
 	pt_ops.write = pt_write; pt_ops.mknod = pt_mknod; pt_ops.mkdir = pt_mkdir; pt_ops.unlink = pt_unlink;
 	pt_ops.rmdir = pt_rmdir; pt_ops.rename = pt_rename; pt_ops.truncate = pt_truncate; pt_ops.chmod = pt_chmod;
+	pt_ops.symlink = pt_symlink; pt_ops.readlink = pt_readlink; pt_ops.link = pt_link;
 	return &pt_ops;
 }
 */

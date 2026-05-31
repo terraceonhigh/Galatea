@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
+	vpath "github.com/terraceonhigh/galatea/internal/bb/filesystem/path"
 	"github.com/terraceonhigh/galatea/pkg/virtual"
 )
 
@@ -166,5 +168,85 @@ func TestFuseFSWritePath(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(root); len(entries) != 0 {
 		t.Fatalf("after removes, host dir not empty: %v", entries)
+	}
+}
+
+// TestFuseFSLinks is the Phase A1 (structural-ops) gate: symlink / readlink /
+// link route through the fuseFS layer to the app's ops. Verified against a real
+// passthrough on a host temp dir, the same discipline as the write-path test.
+// (chown/utimens/fallocate are NOT covered: the lifted NFSv4.0 server rejects
+// owner/time SETATTR at the wire decode and has no ALLOCATE op — they are
+// server/protocol-layer ceilings, documented in GOAL-B-libfuse.md, not shim
+// wiring. The live gate — a real C tool's full op set — stays Architect-gated.)
+func TestFuseFSLinks(t *testing.T) {
+	root := t.TempDir()
+	fsRoot, _ := NewFuseRoot(passthroughOps(root))
+	ctx := context.Background()
+
+	// A target regular file to point at and hard-link.
+	createAttrs := &virtual.Attributes{}
+	createAttrs.SetPermissions(virtual.PermissionsRead | virtual.PermissionsWrite)
+	target, _, _, st := fsRoot.VirtualOpenChild(ctx, virtual.MustNewComponent("f.txt"),
+		virtual.ShareMaskWrite, createAttrs, &virtual.OpenExistingOptions{}, 0, &virtual.Attributes{})
+	if st != virtual.StatusOK || target == nil {
+		t.Fatalf("create f.txt: status=%v", st)
+	}
+	if _, st := target.VirtualWrite([]byte("body"), 0); st != virtual.StatusOK {
+		t.Fatalf("write f.txt: %v", st)
+	}
+
+	// symlink: VirtualSymlink(target="f.txt", name="link") → host symlink.
+	linkAttrs := &virtual.Attributes{}
+	symleaf, _, st := fsRoot.VirtualSymlink(ctx, vpath.UNIXFormat.NewParser("f.txt"),
+		virtual.MustNewComponent("link"), virtual.AttributesMaskFileHandle, linkAttrs)
+	if st != virtual.StatusOK || symleaf == nil {
+		t.Fatalf("symlink: status=%v leaf=%v", st, symleaf)
+	}
+	if len(linkAttrs.GetFileHandle()) == 0 {
+		t.Fatal("symlink: file handle not set on returned attributes (opCreate NF4LNK reads it back)")
+	}
+	fi, err := os.Lstat(filepath.Join(root, "link"))
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("symlink effect on host: mode=%v err=%v", fi.Mode(), err)
+	}
+	if tgt, err := os.Readlink(filepath.Join(root, "link")); err != nil || tgt != "f.txt" {
+		t.Fatalf("host readlink: %q err=%v", tgt, err)
+	}
+
+	// readlink: GETATTR(SymlinkTarget) on the symlink leaf resolves the target,
+	// exactly as the server's opReadLink does.
+	var ra virtual.Attributes
+	symleaf.VirtualGetAttributes(ctx, virtual.AttributesMaskFileType|virtual.AttributesMaskSymlinkTarget, &ra)
+	if ft := ra.GetFileType(); ft != virtual.FileTypeSymlink {
+		t.Fatalf("readlink: file type %v (want symlink)", ft)
+	}
+	parser, ok := ra.GetSymlinkTarget()
+	if !ok {
+		t.Fatal("readlink: symlink target attribute not set")
+	}
+	if got, ok := parserToString(parser); !ok || got != "f.txt" {
+		t.Fatalf("readlink target: %q ok=%v (want f.txt)", got, ok)
+	}
+
+	// link: VirtualLink(name="hard", target leaf) → host hard link, nlink == 2.
+	if _, st := fsRoot.VirtualLink(ctx, virtual.MustNewComponent("hard"), target, 0, &virtual.Attributes{}); st != virtual.StatusOK {
+		t.Fatalf("link: %v", st)
+	}
+	hi, err := os.Stat(filepath.Join(root, "hard"))
+	if err != nil {
+		t.Fatalf("link effect: hard missing: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "hard")); err != nil || string(got) != "body" {
+		t.Fatalf("hard link content: %q err=%v", got, err)
+	}
+	if sys, ok := hi.Sys().(*syscall.Stat_t); ok && sys.Nlink != 2 {
+		t.Fatalf("hard link nlink = %d (want 2)", sys.Nlink)
+	}
+
+	// A hard link across connections is EXDEV, never silently accepted.
+	other := t.TempDir()
+	otherRoot, _ := NewFuseRoot(passthroughOps(other))
+	if _, st := otherRoot.(*fuseDir).VirtualLink(ctx, virtual.MustNewComponent("x"), target, 0, &virtual.Attributes{}); st != virtual.StatusErrXDev {
+		t.Fatalf("cross-conn link: status=%v (want XDev)", st)
 	}
 }
