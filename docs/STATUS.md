@@ -25,6 +25,13 @@ the last entry:
    cgofuse, the library `rclone mount` binds through, runs read-write on the shim**
    (its `dlopen` redirected via `CGOFUSE_LIBFUSE_PATH`; no kext/FUSE-T/macFUSE).
    All live, all committed. See `docs/GOAL-B-libfuse.md` and ROADMAP R9.)
+
+3. **Second consumer landed + public `Serve` (DEC-022).** Minerve/Stepford built a
+   real **NTFS backend** against `pkg/virtual` (out-of-process ntfs-3g bridge,
+   read-write, persists to a real NTFS volume) — a second, *cross-lineage* proof
+   of the FSAL contract. To let her mount from her own repo, added a public root
+   package: `galatea.Serve(ctx, root, resolver, addr)` (the server lives in
+   `internal/`, unimportable externally). Replied to her in Stepford.)
 **Goal:** **GOAL B (R9) — the libfuse maneuver.** Milestone A
 ([`GOAL.md`](GOAL.md)) is complete and banked. The active cursor is the libfuse
 shim's *marquee* — see below.

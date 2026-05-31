@@ -992,3 +992,44 @@ is genuinely gated, not merely unstarted: pjdfstest (Linux CI), pynfs-proper (on
 `pip install`), sleep-wake lifecycle (a non-headless Mac), the Finder screenshot
 (human eyes), and osfs-write (a separate, riskier real-disk call). That is the
 honest "verifiably hard to surmount headless" line the governing goal asked for.
+
+---
+
+## DEC-022 — a public `galatea.Serve` entry point for external FSAL backends
+
+**Date:** 2026-05-30 · **Status:** accepted (built, live-verified) · **Prompted
+by:** Minerve/Stepford's NTFS backend (a second, cross-lineage consumer).
+
+**The problem.** Galatea's whole NFSv4 server — the program, the rpcserver, the
+AUTH_SYS authenticator — lives under `internal/`. That was right for a single
+in-tree consumer (the CLI), but `internal/` is unimportable from *other modules*.
+Stepford built a working NTFS FSAL against the public `pkg/virtual` contract, in
+its own repository, and had no way to stand the server up over it. The FSAL
+boundary was public; the *serve* boundary was not.
+
+**The decision.** Add a public root package `galatea` (import
+`github.com/terraceonhigh/galatea`) exposing exactly:
+
+```go
+func Serve(ctx context.Context, root virtual.Directory, resolver virtual.HandleResolver, addr string) error
+```
+
+It wraps the internal wiring (`NewReadOnlyProgram` → `NewServer` +
+`NewNfs4ProgramService` + `NewSystemAuthenticator` → listen/accept loop), blocking
+until `ctx` is cancelled, then closing the listener and returning nil. The public
+package may import `internal/` (same module); external consumers import only this.
+
+**Two clarifications it bakes in.** (1) It is **read-write capable** — the backend
+decides; `NewReadOnlyProgram` is a historical misnomer and writes flow through it
+(R6 proved this against the writable in-memory FSAL), so a read-write NTFS backend
+serves correctly without a new constructor. (2) The CLI's `cmd/galatea/serve.go`
+was refactored to call `galatea.Serve` for its core loop (DRY); the R6-era
+`GALATEA_TRACE` op-logger was dropped (superseded by the conformance suite and the
+shim's `GALATEA_FUSE_TRACE`).
+
+**What it unblocks.** Stepford (and any future backend — Comprador's MTP, the
+Onfim NTFS cathedral) can now `import "github.com/terraceonhigh/galatea"`, supply
+its own `virtual.Directory` + `HandleResolver`, and mount on macOS with the
+standard `mount_nfs` recipe. The interface is no longer the only public seam; the
+mount is too. Live-verified: the refactored CLI still serves/mounts/reads, clean
+umount. `serve_test.go` guards the lifecycle.
