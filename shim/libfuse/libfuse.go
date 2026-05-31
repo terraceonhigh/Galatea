@@ -459,8 +459,14 @@ func statToAttrs(st *C.struct_stat, p string, requested virtual.AttributesMask, 
 		// macOS struct stat carries the mtime as st_mtimespec (the POSIX
 		// st_mtime is a macro over its tv_sec). Surfacing it lets a `touch`
 		// (SETATTR→op->utimens) round-trip back through getattr to `ls -l`.
-		mt := st.st_mtimespec
-		a.SetLastDataModificationTime(time.Unix(int64(mt.tv_sec), int64(mt.tv_nsec)))
+		// Only emit when the stat actually carries a time: a zero stat (the
+		// hello fixture memsets it; some backends report partial stats) would
+		// otherwise emit 1970, overriding the server's deliberate
+		// deterministicNfstime4 fallback (which exists precisely because a
+		// 1970 mtime confuses many tools). Unset → that fallback stands.
+		if mt := st.st_mtimespec; mt.tv_sec != 0 || mt.tv_nsec != 0 {
+			a.SetLastDataModificationTime(time.Unix(int64(mt.tv_sec), int64(mt.tv_nsec)))
+		}
 	}
 }
 
