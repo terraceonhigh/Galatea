@@ -197,6 +197,12 @@ Many current tools (today's sshfs, newer fs's) are fuse3, not 2.x.
   rclone is unproven). *C* tools are unaffected — position the product for C tools
   first. Removing the tax means a C core: a large rewrite, deliberately **not** on
   this roadmap.
+- **`SUPPORTED_ATTRS` is global, not per-backend.** Advertising the `SPACE_*`/
+  `FILES_*` attrs (statfs) means *every* backend advertises them, including
+  read-only ones (osfs) that never fill them. Per RFC that's a mild
+  advertise-but-omit inconsistency; it's **not a regression** (osfs `df` showed
+  zeros before and after) and doesn't block. The clean fix, if it ever bites, is
+  per-backend supported-attrs — a real architectural change, not worth it now.
 - **FSKit is the native endgame.** This NFS-loopback shim is the bridge; the
   durable native target is a FSKit module (the Onfim cathedral framing). Don't
   over-invest in matching every FUSE-T corner if FSKit is where the long-term value
