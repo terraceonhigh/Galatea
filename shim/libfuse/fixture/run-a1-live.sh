@@ -14,7 +14,8 @@
 set -u
 
 # --- locate the tree ---------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# $0 (not ${BASH_SOURCE[0]}) so the script also runs under plain `sh`, not just bash.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SHIM_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"          # shim/libfuse
 REPO_ROOT="$(cd "$SHIM_DIR/../.." && pwd)"        # repo root
 
