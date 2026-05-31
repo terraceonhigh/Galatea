@@ -141,6 +141,17 @@ and no closed-source daemon. Full plan in [`GOAL-B-libfuse.md`](GOAL-B-libfuse.m
   marquee is a **C** tool (sshfs/ntfs-3g — one Go runtime, ours), gated only on a
   build toolchain. Then the long tail (full ops, FSKit / GOAL B's endgame).
 
+### R10 — Dual-license viability: make Galatea a sellable FUSE-T substitute  ⬜ planned
+
+The decision (2026-05-30): ship **dual-licensed — GPLv3 + commercial** (free for
+FOSS, a paid commercial grant for those shipping closed). The full code roadmap —
+the mandatory LGPL purge that makes a commercial grant possible, then the op
+coverage / open-state / mount-daemon / fuse3 / packaging breadth that makes it
+worth paying for — is in [`DUAL-LICENSE-ROADMAP.md`](DUAL-LICENSE-ROADMAP.md).
+**Gate (Phase L, mandatory first):** reimplement `fuse_opt` + own headers so the
+shipped dylib contains no copyleft we don't own. Minimum sellable ≈ 6–10 wks; full
+FUSE-T parity ≈ 3–4 months.
+
 ---
 
 **Rough envelope** (solo, part-time): R1 an afternoon; R2 1–3 wks; R3–R5 ~3–4

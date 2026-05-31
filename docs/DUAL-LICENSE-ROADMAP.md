@@ -1,0 +1,141 @@
+# Dual-license viability — the code roadmap
+
+**Decided 2026-05-30.** Galatea ships **dual-licensed: GPLv3 (the open license,
+already in place) + a commercial license** sold to those who ship closed-source
+products on it. FOSS developers use it free under GPLv3; a company that profits
+from a closed product built on Galatea buys a commercial grant (the "reasonable
+chunk"). This out-positions FUSE-T on both flanks: open where FUSE-T is closed,
+and a cleaner, standard commercial deal where FUSE-T has a bespoke "commercial
+use" clause.
+
+**"Viable" means two things at once:**
+1. **Cleanly licensable** — every line in the shipped artifact is *ours to grant*
+   under a commercial license (no copyleft code we don't own).
+2. **Worth paying for** — a real FUSE-T substitute: the op coverage, lifecycle,
+   and polish a macOS developer needs to build on it and ship.
+
+This file is the *code* for both. Non-code viability (a CLA, the commercial
+license text, the sales/contact path) is flagged at the end — necessary, but not
+code. Phases are dependency-ordered; **Phase L gates everything commercial.**
+
+---
+
+## Phase L — License-clean the base  ⛔ MANDATORY GATE
+
+Nothing commercial can ship until this is done. The dylib today links **LGPL**
+code (`shim/libfuse/fuse_opt.c`, vendored from libfuse) and compiles against LGPL
+headers. **You cannot grant a proprietary license over code you don't own.**
+
+- **L1 — Reimplement `fuse_opt`.** A clean-room option parser
+  (`fuse_opt_parse`/`match`/`add_arg`/`insert_arg`/`add_opt`/`free_args`) matching
+  libfuse 2.9's *behavior* (the man page + a behavior test suite — **not** the LGPL
+  source; keep it clean-room). Replaces `fuse_opt.c`. ~1 wk.
+- **L2 — Own the headers.** Replace the vendored LGPL `fuse.h`/`fuse_common.h`/
+  `fuse_opt.h` with our own ABI-compatible declarations (the structs + signatures
+  we already match byte-for-byte). ~few days. (APIs are likely uncopyrightable
+  post-*Google v. Oracle*, but clean headers remove all doubt.)
+- **L3 — License hygiene.** SPDX headers on our files; keep `internal/bb` +
+  `internal/xdr` Apache-2.0 with a `NOTICE`; `LICENSE` (GPLv3) + `COMMERCIAL.md`
+  (commercial-license contact + terms sketch); a CI license scan that fails on any
+  LGPL/AGPL/incompatible code in the shipped tree.
+- **Gate:** the scan shows only Apache-2.0 (vendored, attributed) + our
+  dual-licensed code. The shipped dylib is ours to grant. **Est. ~2 wks.**
+
+## Phase A — Full libfuse-2.x op coverage
+
+Today the shim implements ~18 of ~40 `fuse_operations`. A real tool needs the rest.
+
+- **A1 — Mechanical ops:** `symlink`/`readlink`/`link`, `chown`, `utimens`,
+  `statfs` (free-space — also unblocks some write mounts), `flush`, `fsync`/
+  `fsyncdir`, `access`, `fallocate`. Each maps to an NFS op or a sane default.
+  Translation tests, same de-risk discipline as R9. ~1–2 wks.
+- **A2 — Extended attributes:** `setxattr`/`getxattr`/`listxattr`/`removexattr` →
+  NFSv4 named attributes (today the FSAL reports `HasNamedAttributes=false`; real
+  support wires named-attr directories through the server + FSAL). ~1–2 wks, or
+  document as an unsupported ceiling.
+- **A3 — macFUSE macOS extensions:** `setvolname`, `exchange`, `getxtimes`,
+  `setcrtime`/`setbkuptime`, `chflags`, `setattr_x`/`fsetattr_x` — what *Mac-native*
+  FUSE apps use. Implement what maps to NFS; document the rest. ~1 wk partial.
+- **Gate:** a representative real C FUSE tool (ntfs-3g, or sshfs-2.x) runs its full
+  op set through the shim. **Est. ~3–5 wks.**
+
+## Phase S — Full open-state semantics
+
+Today open/read/write is per-op atomic (open→op→release *each call*) — correct for
+path-based fs's and cgofuse's memfs, wrong for fs's that hold state across an open
+session.
+
+- **S1 — Persistent handle threading:** `open()` once → a stable `fuse_file_info`
+  (carrying the fs's `fh`) threaded through every read/write until `release()`,
+  keyed off the NFS open-state the server already tracks (OPEN/CLOSE). `fuseConn`
+  grows an open-handle table.
+- **S2 — flush/fsync/release** in the correct order.
+- **Gate:** a stateful fs (relies on `fh` across the session) works, not just
+  stateless ones. **Est. ~1–2 wks.**
+
+## Phase M — Mount lifecycle & daemon
+
+Today: `mount_nfs` + signal-unmount, single mount, no eject integration.
+
+- **M1 — `galatea.Mount()`:** NetFS (`NetFSMountURLAsync`) or `mount_nfs` +
+  **DiskArbitration** for a real Finder volume (named, ejectable).
+- **M2 — Lifecycle:** sleep/wake survival, graceful unmount, **multi-mount**,
+  mount options (volname, ro, allow_other, …).
+- **M3 — A launchd agent/daemon** that owns mounts — the background "it just works"
+  UX FUSE-T ships.
+- **Gate:** Finder volume with eject; survives sleep/wake; concurrent mounts.
+  **Est. ~3–4 wks.**
+
+## Phase 3 — libfuse-3.x ABI
+
+Many current tools (today's sshfs, newer fs's) are fuse3, not 2.x.
+
+- **3.1 — A second ABI front** (`libfuse.3.dylib`-compatible): fuse3
+  `fuse_operations` (3-arg ops, `fuse_config` in `init`, `readdir` flags), fuse3
+  `fuse_main`/`fuse_loop`, `fuse_lowlevel` deltas. The `fuseFS` translation core is
+  reusable; the C ABI/struct layer doubles.
+- **Gate:** a fuse3 tool runs through the shim. **Est. ~2–4 wks.**
+
+## Phase D — Distribution & trust
+
+- **D1 — Sign + notarize:** Developer-ID + `notarytool` (the `macos-notarize`
+  skill) → a notarized `.dmg`/`.pkg`. ~days.
+- **D2 — Install story:** daemon + dylib placement so tools find Galatea's libfuse
+  (generalize the `CGOFUSE_LIBFUSE_PATH`/install-name path); a "use Galatea instead
+  of macFUSE/FUSE-T" switch.
+- **D3 — Developer docs:** a "port your FUSE app to Galatea" guide; the fixtures
+  (`hello`, passthrough, `optfs`) become samples; an API reference.
+
+---
+
+## Minimum-viable vs. full
+
+- **Minimum sellable:** **Phase L (mandatory)** + the common subset of **A** +
+  **M** + **D1**. A macOS dev can link it, ship a real volume, and you can
+  commercially license it. fuse3 (Phase 3), full xattrs (A2), and full open-state
+  (S) follow as the market asks. **Rough envelope: ~6–10 focused weeks.**
+- **Full FUSE-T parity:** all phases incl. Phase 3 and the macOS extensions.
+  **~3–4 months.**
+
+## Caveats carried forward
+
+- **Two-Go-runtime tax.** The shim is Go, so a *Go* FUSE tool (rclone) co-loads two
+  runtimes (a background signal/scheduler tax — memfs is clean, heavy concurrent
+  rclone is unproven). *C* tools are unaffected — position the product for C tools
+  first. Removing the tax means a C core: a large rewrite, deliberately **not** on
+  this roadmap.
+- **FSKit is the native endgame.** This NFS-loopback shim is the bridge; the
+  durable native target is a FSKit module (the Onfim cathedral framing). Don't
+  over-invest in matching every FUSE-T corner if FSKit is where the long-term value
+  is. The commercial story: *"the open, license-clean FUSE-T today; FSKit-native
+  tomorrow."*
+
+## Non-code prerequisites (necessary for viability)
+
+Not code, but the dual-license isn't *viable* without them:
+- A **Contributor License Agreement** before opening contribution — otherwise a
+  single GPL-only contribution poisons the ability to sell commercial licenses.
+- The **commercial license text** + a contact/sales path (`COMMERCIAL.md`).
+- The "reasonable chunk" is a **per-deal negotiation** the dual-license *enables*
+  (flat fee / per-seat / revenue share), set when a commercial licensee asks — the
+  LICENSE only needs "GPLv3 + for commercial licensing, contact …".
