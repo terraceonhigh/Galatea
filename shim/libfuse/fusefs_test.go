@@ -286,27 +286,36 @@ func TestFuseFSUtimens(t *testing.T) {
 		t.Fatalf("create t.txt: %v", st)
 	}
 
-	want := time.Unix(1700000000, 0)
+	// Set atime and mtime to DISTINCT values; both must land on the host file in
+	// their own field (op->utimens carries each, UTIME_OMIT for any not supplied).
+	wantM := time.Unix(1700000000, 0) // 2023
+	wantA := time.Unix(1600000000, 0) // 2020
 	in := &virtual.Attributes{}
-	in.SetLastDataModificationTime(want)
+	in.SetLastDataModificationTime(wantM)
+	in.SetLastAccessTime(wantA)
 	if st := leaf.VirtualSetAttributes(ctx, in, 0, &virtual.Attributes{}); st != virtual.StatusOK {
-		t.Fatalf("setattr mtime: %v", st)
+		t.Fatalf("setattr times: %v", st)
 	}
 
-	// effect on the host file
+	// effect on the host file: mtime and atime both set, independently.
 	fi, err := os.Stat(filepath.Join(root, "t.txt"))
 	if err != nil {
 		t.Fatalf("stat: %v", err)
 	}
-	if fi.ModTime().Unix() != want.Unix() {
-		t.Fatalf("host mtime = %d, want %d", fi.ModTime().Unix(), want.Unix())
+	if fi.ModTime().Unix() != wantM.Unix() {
+		t.Fatalf("host mtime = %d, want %d", fi.ModTime().Unix(), wantM.Unix())
+	}
+	if sys, ok := fi.Sys().(*syscall.Stat_t); ok && sys.Atimespec.Sec != wantA.Unix() {
+		t.Fatalf("host atime = %d, want %d (mtime must not leak in)", sys.Atimespec.Sec, wantA.Unix())
 	}
 
 	// round-trips back through getattr
 	var ra virtual.Attributes
-	leaf.VirtualGetAttributes(ctx, virtual.AttributesMaskLastDataModificationTime, &ra)
-	got, ok := ra.GetLastDataModificationTime()
-	if !ok || got.Unix() != want.Unix() {
-		t.Fatalf("getattr mtime = %d ok=%v, want %d", got.Unix(), ok, want.Unix())
+	leaf.VirtualGetAttributes(ctx, virtual.AttributesMaskLastDataModificationTime|virtual.AttributesMaskLastAccessTime, &ra)
+	if got, ok := ra.GetLastDataModificationTime(); !ok || got.Unix() != wantM.Unix() {
+		t.Fatalf("getattr mtime = %d ok=%v, want %d", got.Unix(), ok, wantM.Unix())
+	}
+	if got, ok := ra.GetLastAccessTime(); !ok || got.Unix() != wantA.Unix() {
+		t.Fatalf("getattr atime = %d ok=%v, want %d", got.Unix(), ok, wantA.Unix())
 	}
 }

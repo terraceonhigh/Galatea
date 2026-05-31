@@ -194,11 +194,10 @@ func TestConformanceSetattrMtime(t *testing.T) {
 	// Build the SETATTR fattr4 by hand: MODE(33) then TIME_MODIFY_SET(54), in
 	// ascending order, both in attrmask word 1.
 	// Mirror what macOS `touch` actually sends: MODE(33) + TIME_ACCESS_SET(48) +
-	// TIME_MODIFY_SET(54), in ascending order. The atime is set to a DISTINCT
-	// value (2020) from the mtime (2023) so the read-back proves the decoder
-	// applied the *mtime* field, not the atime — i.e. the positional decode of
-	// two adjacent settime4 fields stayed in sync. atime is accepted+consumed but
-	// not stored (noatime-style), so it must not leak into mtime.
+	// TIME_MODIFY_SET(54), in ascending order. atime is set to a DISTINCT value
+	// (2020) from mtime (2023); both are applied, and the read-back below asserts
+	// each lands in its own field — proving the positional decode of two adjacent
+	// settime4 fields stayed in sync and the two times weren't cross-wired.
 	// 0o555 (r-x, no write) is distinct from the writable dir's 0o777 default and
 	// round-trips cleanly through this FSAL's single-user Permissions model.
 	atimeNT := timeToNfstime4(time.Unix(1600000000, 0)) // 2020 — distinct from want
@@ -238,19 +237,23 @@ func TestConformanceSetattrMtime(t *testing.T) {
 		t.Errorf("Attrsset = %v, want TIME_MODIFY_SET bit", sok.Attrsset)
 	}
 
-	// Read back MODE + TIME_MODIFY (the read-only mtime) in a fresh COMPOUND.
+	// Read back MODE + TIME_ACCESS + TIME_MODIFY (the read-only times) in a fresh
+	// COMPOUND. atime and mtime were set to DISTINCT values, so reading both back
+	// proves they applied independently and weren't swapped or cross-wired.
 	getRes := doCompound(t, program,
 		&nfsv4.NfsArgop4_OP_PUTROOTFH{},
 		&nfsv4.NfsArgop4_OP_LOOKUP{Oplookup: nfsv4.Lookup4args{Objname: "d"}},
 		&nfsv4.NfsArgop4_OP_GETATTR{Opgetattr: nfsv4.Getattr4args{
-			AttrRequest: []uint32{0, (1 << (nfsv4.FATTR4_MODE - 32)) | (1 << (nfsv4.FATTR4_TIME_MODIFY - 32))}}},
+			AttrRequest: []uint32{0, (1 << (nfsv4.FATTR4_MODE - 32)) |
+				(1 << (nfsv4.FATTR4_TIME_ACCESS - 32)) |
+				(1 << (nfsv4.FATTR4_TIME_MODIFY - 32))}}},
 	)
 	if getRes.Status != nfsv4.NFS4_OK {
 		t.Fatalf("read-back: status = %v, want NFS4_OK", getRes.Status)
 	}
 	fa := getRes.Resarray[2].(*nfsv4.NfsResop4_OP_GETATTR).Opgetattr.(*nfsv4.Getattr4res_NFS4_OK).Resok4.ObjAttributes
 
-	// Decode the result buffer positionally: MODE(33) then TIME_MODIFY(53).
+	// Decode positionally: MODE(33), TIME_ACCESS(47), TIME_MODIFY(53).
 	r := bytes.NewReader(fa.AttrVals)
 	var w1 uint32
 	if len(fa.Attrmask) > 1 {
@@ -266,6 +269,17 @@ func TestConformanceSetattrMtime(t *testing.T) {
 		}
 	} else {
 		t.Fatal("read-back fattr4 missing MODE")
+	}
+	if w1&(1<<(nfsv4.FATTR4_TIME_ACCESS-32)) != 0 {
+		var got nfsv4.Nfstime4
+		if _, err := got.ReadFrom(r); err != nil {
+			t.Fatalf("decode time_access: %v", err)
+		}
+		if got.Seconds != atimeNT.Seconds || got.Nseconds != atimeNT.Nseconds {
+			t.Errorf("read-back atime = {%d,%d}, want {%d,%d} (mtime must not leak in)", got.Seconds, got.Nseconds, atimeNT.Seconds, atimeNT.Nseconds)
+		}
+	} else {
+		t.Fatal("read-back fattr4 missing TIME_ACCESS")
 	}
 	if w1&(1<<(nfsv4.FATTR4_TIME_MODIFY-32)) != 0 {
 		var got nfsv4.Nfstime4

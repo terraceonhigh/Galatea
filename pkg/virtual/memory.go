@@ -109,6 +109,7 @@ type memoryFile struct {
 	inode     uint64
 	perms     Permissions
 	contents  []byte
+	atime     time.Time     // last access time; set via SETATTR time_access_set
 	mtime     time.Time     // last data modification time; set via SETATTR time_modify_set
 	readDelay time.Duration // if >0, VirtualRead sleeps this long first
 }
@@ -162,6 +163,9 @@ func (f *memoryFile) fillAttributes(requested AttributesMask, a *Attributes) {
 	if requested&AttributesMaskLastDataModificationTime != 0 && !f.mtime.IsZero() {
 		a.SetLastDataModificationTime(f.mtime)
 	}
+	if requested&AttributesMaskLastAccessTime != 0 && !f.atime.IsZero() {
+		a.SetLastAccessTime(f.atime)
+	}
 }
 
 func (f *memoryFile) VirtualGetAttributes(ctx context.Context, requested AttributesMask, attributes *Attributes) {
@@ -195,6 +199,9 @@ func (f *memoryFile) VirtualSetAttributes(ctx context.Context, in *Attributes, r
 	}
 	if mtime, ok := in.GetLastDataModificationTime(); ok {
 		f.mtime = mtime
+	}
+	if atime, ok := in.GetLastAccessTime(); ok {
+		f.atime = atime
 	}
 	f.fillAttributes(requested, attributes)
 	return StatusOK
@@ -294,6 +301,7 @@ type memoryDirectory struct {
 	mu        sync.Mutex
 	inode     uint64
 	perms     Permissions
+	atime     time.Time // last access time; set via SETATTR time_access_set
 	mtime     time.Time // last modification time; set via SETATTR time_modify_set
 	children  map[string]Node
 	nextInode *atomic.Uint64 // non-nil => writable; shared across the tree
@@ -357,6 +365,9 @@ func (d *memoryDirectory) fillAttributes(requested AttributesMask, a *Attributes
 	if requested&AttributesMaskLastDataModificationTime != 0 && !d.mtime.IsZero() {
 		a.SetLastDataModificationTime(d.mtime)
 	}
+	if requested&AttributesMaskLastAccessTime != 0 && !d.atime.IsZero() {
+		a.SetLastAccessTime(d.atime)
+	}
 }
 
 func (d *memoryDirectory) VirtualGetAttributes(ctx context.Context, requested AttributesMask, attributes *Attributes) {
@@ -376,6 +387,9 @@ func (d *memoryDirectory) VirtualSetAttributes(ctx context.Context, in *Attribut
 	}
 	if mtime, ok := in.GetLastDataModificationTime(); ok {
 		d.mtime = mtime
+	}
+	if atime, ok := in.GetLastAccessTime(); ok {
+		d.atime = atime
 	}
 	d.fillAttributes(requested, attributes)
 	return StatusOK

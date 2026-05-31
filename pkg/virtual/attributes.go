@@ -52,6 +52,10 @@ const (
 	// AttributesMaskSymlinkTarget requests the target of a symbolic
 	// link.
 	AttributesMaskSymlinkTarget
+	// AttributesMaskLastAccessTime requests the last access time
+	// (st_atim). Added at the end of the block so existing bit values
+	// are unchanged.
+	AttributesMaskLastAccessTime
 )
 
 // Attributes of a file, normally requested through stat() or readdir().
@@ -69,6 +73,7 @@ type Attributes struct {
 	hasNamedAttributes              bool
 	inodeNumber                     uint64
 	isInsideNamedAttributeDirectory bool
+	lastAccessTime                  time.Time
 	lastDataModificationTime        time.Time
 	linkCount                       uint32
 	ownerGroupID                    uint32
@@ -189,6 +194,18 @@ func (a *Attributes) GetIsInNamedAttributeDirectory() bool {
 func (a *Attributes) SetIsInNamedAttributeDirectory(isInsideNamedAttributeDirectory bool) *Attributes {
 	a.isInsideNamedAttributeDirectory = isInsideNamedAttributeDirectory
 	a.fieldsPresent |= AttributesMaskIsInNamedAttributeDirectory
+	return a
+}
+
+// GetLastAccessTime returns the last access time (st_atim).
+func (a *Attributes) GetLastAccessTime() (time.Time, bool) {
+	return a.lastAccessTime, a.fieldsPresent&AttributesMaskLastAccessTime != 0
+}
+
+// SetLastAccessTime sets the last access time (st_atim).
+func (a *Attributes) SetLastAccessTime(lastAccessTime time.Time) *Attributes {
+	a.lastAccessTime = lastAccessTime
+	a.fieldsPresent |= AttributesMaskLastAccessTime
 	return a
 }
 

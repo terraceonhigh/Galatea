@@ -649,7 +649,11 @@ func (p *nfs40Program) writeAttributes(attributes *virtual.Attributes, attrReque
 		}
 		if b := uint32(1 << (nfsv4.FATTR4_TIME_ACCESS - 32)); f&b != 0 {
 			s |= b
-			deterministicNfstime4.WriteTo(w)
+			t := deterministicNfstime4
+			if lastAccessTime, ok := attributes.GetLastAccessTime(); ok {
+				t = timeToNfstime4(lastAccessTime)
+			}
+			t.WriteTo(w)
 		}
 		if b := uint32(1 << (nfsv4.FATTR4_TIME_METADATA - 32)); f&b != 0 {
 			s |= b
@@ -3102,6 +3106,9 @@ func attrRequestToAttributesMask(attrRequest nfsv4.Bitmap4) virtual.AttributesMa
 		if f&uint32(1<<(nfsv4.FATTR4_OWNER_GROUP-32)) != 0 {
 			attributesMask |= virtual.AttributesMaskOwnerGroupID
 		}
+		if f&uint32(1<<(nfsv4.FATTR4_TIME_ACCESS-32)) != 0 {
+			attributesMask |= virtual.AttributesMaskLastAccessTime
+		}
 		if f&uint32(1<<(nfsv4.FATTR4_TIME_MODIFY-32)) != 0 {
 			attributesMask |= virtual.AttributesMaskLastDataModificationTime
 		}
@@ -3278,15 +3285,16 @@ func fattr4ToAttributes(in *nfsv4.Fattr4, out *virtual.Attributes) nfsv4.Nfsstat
 			return nfsv4.NFS4ERR_PERM
 		}
 		// FATTR4_TIME_ACCESS_SET (48): `touch` (and `touch -t`) sets atime AND
-		// mtime, so the macOS client sends this alongside TIME_MODIFY_SET. We
-		// have no atime in virtual.Attributes (noatime-style), so we ACCEPT and
-		// CONSUME its settime4 — both to keep the positional decode in sync for
-		// the mtime that follows, and so the whole SETATTR doesn't fail
-		// ATTRNOTSUPP (which a lenient client swallows, silently dropping the
-		// mtime too). atime itself is not applied; storing it is a follow-on.
+		// mtime, so the macOS client sends this alongside TIME_MODIFY_SET.
+		// SET_TO_CLIENT_TIME sets the atime attribute; SET_TO_SERVER_TIME is
+		// decoded but not applied (no wall clock — same deferral as mtime).
 		if f&(1<<(nfsv4.FATTR4_TIME_ACCESS_SET-32)) != 0 {
-			if _, _, err := nfsv4.ReadSettime4(r); err != nil {
+			settime, _, err := nfsv4.ReadSettime4(r)
+			if err != nil {
 				return nfsv4.NFS4ERR_BADXDR
+			}
+			if ct, ok := settime.(*nfsv4.Settime4_SET_TO_CLIENT_TIME4); ok {
+				out.SetLastAccessTime(nfstime4ToTime(ct.Time))
 			}
 		}
 		// FATTR4_TIME_MODIFY_SET (54) is the *writable* mtime (a settime4); the

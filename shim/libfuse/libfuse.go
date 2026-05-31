@@ -103,14 +103,18 @@ static int call_link(const struct fuse_operations *op, const char *from, const c
 	return op->link(from, to);
 }
 
-// --- A1 time op: utimens. We only carry mtime (the FSAL has no atime), so
-// atime is UTIME_OMIT — "leave unchanged" — and only mtime is set. ---
+// --- A1 time op: utimens. atime and mtime are set independently; a time the
+// caller didn't supply is UTIME_OMIT ("leave unchanged"). ---
 static int has_utimens(const struct fuse_operations *op) { return op->utimens != NULL; }
-static int call_utimens(const struct fuse_operations *op, const char *path, long mt_sec, long mt_nsec) {
+static int call_utimens(const struct fuse_operations *op, const char *path,
+		int set_atime, long at_sec, long at_nsec,
+		int set_mtime, long mt_sec, long mt_nsec) {
 	if (!op->utimens) return -ENOSYS;
 	struct timespec tv[2];
-	tv[0].tv_sec = 0; tv[0].tv_nsec = UTIME_OMIT;       // atime: unchanged
-	tv[1].tv_sec = mt_sec; tv[1].tv_nsec = mt_nsec;     // mtime: set
+	if (set_atime) { tv[0].tv_sec = at_sec; tv[0].tv_nsec = at_nsec; }
+	else           { tv[0].tv_sec = 0;      tv[0].tv_nsec = UTIME_OMIT; }
+	if (set_mtime) { tv[1].tv_sec = mt_sec; tv[1].tv_nsec = mt_nsec; }
+	else           { tv[1].tv_sec = 0;      tv[1].tv_nsec = UTIME_OMIT; }
 	return op->utimens(path, tv);
 }
 
@@ -468,6 +472,11 @@ func statToAttrs(st *C.struct_stat, p string, requested virtual.AttributesMask, 
 			a.SetLastDataModificationTime(time.Unix(int64(mt.tv_sec), int64(mt.tv_nsec)))
 		}
 	}
+	if requested&virtual.AttributesMaskLastAccessTime != 0 {
+		if at := st.st_atimespec; at.tv_sec != 0 || at.tv_nsec != 0 {
+			a.SetLastAccessTime(time.Unix(int64(at.tv_sec), int64(at.tv_nsec)))
+		}
+	}
 }
 
 // --- directory ------------------------------------------------------------
@@ -815,11 +824,21 @@ func (f *fuseFile) VirtualSetAttributes(ctx context.Context, in *virtual.Attribu
 			return errStatus(r)
 		}
 	}
-	if mtime, ok := in.GetLastDataModificationTime(); ok {
-		// SETATTR time_modify_set → op->utimens (mtime only; atime is UTIME_OMIT
-		// in the trampoline, since the FSAL carries no atime).
+	atime, hasAtime := in.GetLastAccessTime()
+	mtime, hasMtime := in.GetLastDataModificationTime()
+	if hasAtime || hasMtime {
+		// SETATTR time_access_set / time_modify_set → op->utimens. Each time is
+		// set independently; the one not supplied is UTIME_OMIT in the trampoline.
+		var sa, sm C.int
+		var asec, ansec, msec, mnsec C.long
+		if hasAtime {
+			sa, asec, ansec = 1, C.long(atime.Unix()), C.long(atime.Nanosecond())
+		}
+		if hasMtime {
+			sm, msec, mnsec = 1, C.long(mtime.Unix()), C.long(mtime.Nanosecond())
+		}
 		f.conn.mu.Lock()
-		r := C.call_utimens(f.conn.op, cp, C.long(mtime.Unix()), C.long(mtime.Nanosecond()))
+		r := C.call_utimens(f.conn.op, cp, sa, asec, ansec, sm, msec, mnsec)
 		f.conn.mu.Unlock()
 		if r < 0 {
 			return errStatus(r)
