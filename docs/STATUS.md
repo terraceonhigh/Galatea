@@ -58,19 +58,23 @@ the last entry:
    ceiling:** `chown` (idmap policy), atime (new attr field), fallocate (no 4.2
    ALLOCATE), statfs (no hook).
 
-**↳ WAKE-UP (for the Architect, 2026-05-30 night):** while you slept I lifted
-utimens(mtime) end to end — all headless-green (`go test ./... && -race`,
-CGO-free held, fmt clean). **One live re-run waiting:** `bash
-shim/libfuse/fixture/run-a1-live.sh` — it now also exercises `touch -t` (must
-pass) and plain `touch` (informational: reveals whether macOS sends CLIENT- or
-SERVER-time). Paste the output and I'll mark the utimens live gate met (or fix
-whatever the mount surfaces). Nothing is half-applied; every commit is green.
+**↳ RESOLVED + a workflow change (2026-05-30):** utimens(mtime) is **LIVE-PROVEN,
+9/9** in `run-a1-live.sh`. The live run found the real bug headless couldn't:
+the macOS client sends a time SETATTR only if the server advertises the writable
+`TIME_*_SET` attributes in `FATTR4_SUPPORTED_ATTRS` (it didn't) — fixed (`98fc979`).
+plain `touch` is confirmed `SET_TO_SERVER_TIME` (decoded, not applied — no wall
+clock; the deferred gap), backed by a wire trace, not a guess.
+**Big one: live mounts are no longer Architect-gated.** `mount_nfs` runs fine
+inside the agent sandbox — I ran the full live harness myself. Live gates (A1,
+utimens, future C-tool marquee) can now be self-driven; the Architect is needed
+only for things that truly need a human (Finder/GUI demos, GitHub pushes).
 
 **Goal:** **R10 — dual-license viability (feature phases).** Milestone A and GOAL
 B (R9, incl. the marquee) are complete and banked. The active cursor is Phase A —
-full libfuse-2.x op coverage; A1's structural ops (symlink/readlink/link) are in
-and **live-proven on macOS**, and **utimens(mtime)** is headless-proven,
-**live-pending** the `run-a1-live.sh` re-run.
+full libfuse-2.x op coverage; A1's structural ops (symlink/readlink/link) **and
+utimens(mtime) + chmod** are **live-proven on macOS** (`run-a1-live.sh`, 9/9,
+self-run). Remaining time gaps: atime (new attr field) + `SET_TO_SERVER_TIME`
+(needs a wall clock — the deterministic-server architecture call).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
 pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
 `MISTAKES.md` M-003.)

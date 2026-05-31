@@ -72,18 +72,26 @@ Today the shim implements ~18 of ~40 `fuse_operations`. A real tool needs the re
   round-trip + hard link with `nlink==2` — no kext, no FUSE-T, no root; clean
   teardown. This is the over-the-wire tier (CREATE-NF4LNK→LOOKUP→READLINK→LINK as
   real COMPOUNDs over the NFS client) that R9 1b/2b set as the bar.
-- **A1-times — `utimens` (mtime) ✅ headless, live-pending (2026-05-30).** The
-  first server-layer attribute lift. The decoder (`fattr4ToAttributes`) now
-  accepts **`FATTR4_TIME_MODIFY_SET`** (54, the *writable* settime4 — not the
-  read-only `TIME_MODIFY`/53 a client never sends in SETATTR), the in-memory FSAL
-  stores+emits mtime, and the shim's `VirtualSetAttributes`→`op->utimens` carries
-  it. `SET_TO_CLIENT_TIME` (what `touch -t`/`cp -p`/`rsync -t` send) works;
-  `SET_TO_SERVER_TIME` is decoded but **not applied** — the lifted server has no
-  wall clock (deterministic by design), so server-time is a deferred architecture
-  decision. Proven headless: `TestConformanceSetattrMtime` (over-the-wire, 2-attr
-  MODE+TIME_MODIFY_SET to catch ordering desync) + `TestFuseFSUtimens` (shim).
-  Live `touch` re-run pending (in `run-a1-live.sh`). Commits `6d5a1cd`/`3b4a8e0`/
-  `52032d8`.
+- **A1-times — `utimens` (mtime) ✅✅ LIVE-PROVEN (2026-05-30).** The first
+  server-layer attribute lift, proven end to end (`run-a1-live.sh`, 9/9). Three
+  pieces, all needed:
+  1. **Advertise** `FATTR4_TIME_ACCESS_SET`(48) + `FATTR4_TIME_MODIFY_SET`(54) in
+     `FATTR4_SUPPORTED_ATTRS` — *the* live-only bug: the macOS client sends a
+     SETATTR only for attributes the server advertises, so without this it
+     skipped the time-set entirely and `touch` no-opped (commit `98fc979`).
+  2. **Decode** `TIME_MODIFY_SET` (the *writable* mtime settime4 — not read-only
+     `TIME_MODIFY`/53) and accept+consume `TIME_ACCESS_SET` (`touch` sets atime
+     AND mtime together; rejecting it failed the whole SETATTR). atime is
+     consumed-not-stored (noatime-style).
+  3. **Apply** through the in-memory FSAL (stores/emits mtime) and the shim
+     (`VirtualSetAttributes`→`op->utimens`).
+  Wire-confirmed by an env-gated `GALATEA_SETATTR_TRACE`: `touch -t` →
+  `TIME_ACCESS_SET|TIME_MODIFY_SET`, 32 bytes (two `SET_TO_CLIENT_TIME`) → mtime
+  lands; plain `touch` → same mask, 8 bytes (two `SET_TO_SERVER_TIME`, no stamp)
+  → decoded but **not applied** (no wall clock — the deferred path, now backed by
+  wire evidence). Headless: `TestConformanceSetattrMtime` (macOS-shaped 3-attr,
+  distinct atime≠mtime) + `TestFuseFSUtimens`. Commits `6d5a1cd`/`3b4a8e0`/
+  `52032d8`/`73eb6c8`/`98fc979`.
 - **A1-ceiling — still a server-layer task, not shim wiring** (verified by reading
   the dispatch before wiring — the advisor's "compiles-and-lies" check):
   - `chown` — `fattr4ToAttributes` returns **NFS4ERR_PERM** for `OWNER`/
