@@ -3,8 +3,10 @@ package nfsv4
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"math"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -539,8 +541,10 @@ func (p *nfs40Program) writeAttributes(attributes *virtual.Attributes, attrReque
 					(1 << (nfsv4.FATTR4_OWNER - 32)) |
 					(1 << (nfsv4.FATTR4_OWNER_GROUP - 32)) |
 					(1 << (nfsv4.FATTR4_TIME_ACCESS - 32)) |
+					(1 << (nfsv4.FATTR4_TIME_ACCESS_SET - 32)) |
 					(1 << (nfsv4.FATTR4_TIME_METADATA - 32)) |
-					(1 << (nfsv4.FATTR4_TIME_MODIFY - 32)),
+					(1 << (nfsv4.FATTR4_TIME_MODIFY - 32)) |
+					(1 << (nfsv4.FATTR4_TIME_MODIFY_SET - 32)),
 			})
 		}
 		if b := uint32(1 << nfsv4.FATTR4_TYPE); f&b != 0 {
@@ -2103,7 +2107,12 @@ func (s *compoundState) opSetattr(ctx context.Context, args *nfsv4.Setattr4args)
 	}
 
 	var attributes virtual.Attributes
-	if st := fattr4ToAttributes(&args.ObjAttributes, &attributes); st != nfsv4.NFS4_OK {
+	st = fattr4ToAttributes(&args.ObjAttributes, &attributes)
+	if os.Getenv("GALATEA_SETATTR_TRACE") != "" {
+		fmt.Fprintf(os.Stderr, "[setattr] attrmask=%v attrvals=%d bytes -> decode=%v\n",
+			args.ObjAttributes.Attrmask, len(args.ObjAttributes.AttrVals), st)
+	}
+	if st != nfsv4.NFS4_OK {
 		return nfsv4.Setattr4res{Status: st}
 	}
 	if vs := currentNode.VirtualSetAttributes(ctx, &attributes, 0, &virtual.Attributes{}); vs != virtual.StatusOK {

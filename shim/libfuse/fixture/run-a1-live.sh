@@ -97,7 +97,14 @@ if ln "$MNT/target.txt" "$MNT/hard" 2>/dev/null; then
   [ "$NLINK" = "2" ] && ok "hard link nlink = 2" || bad "nlink = $NLINK (want 2)"
 else bad "hard link: ln at the mount failed"; fi
 
-# 6. utimens via `touch -t` — an explicit timestamp (SET_TO_CLIENT_TIME). This
+# 6. chmod — the simplest writable attribute, a SETATTR(MODE). 0555 collapses
+#    cleanly through this FSAL's single-user permission model.
+if chmod 0555 "$MNT/target.txt" 2>/dev/null; then
+  M="$(stat -f '%Lp' "$MNT/target.txt" 2>/dev/null || true)"
+  [ "$M" = "555" ] && ok "chmod 0555 via the mount (SETATTR mode)" || bad "chmod: mode = '$M' (want 555)"
+else bad "chmod at the mount failed"; fi
+
+# 7. utimens via `touch -t` — an explicit timestamp (SET_TO_CLIENT_TIME). This
 #    is the path the server fully implements; expect the mtime to change to 2000.
 if touch -t 200001020304.05 "$MNT/target.txt" 2>/dev/null; then
   YEAR="$(stat -f '%Sm' -t '%Y' "$MNT/target.txt" 2>/dev/null || true)"
