@@ -59,17 +59,19 @@ Keep the LGPL quarantined and labelled (VENDOR.md already does) until then.
 
 Today the shim implements ~18 of ~40 `fuse_operations`. A real tool needs the rest.
 
-- **A1 — Structural ops ✅ (shim half, 2026-05-30):** `symlink`/`readlink`/`link`
-  wired into the shim (`VirtualSymlink`→`op->symlink`, `VirtualGetAttributes`
-  symlink-target→`op->readlink`, `VirtualLink`→`op->link`), green against the
-  passthrough stub (`TestFuseFSLinks` — real host symlink/readlink/hard-link +
-  EXDEV guard), race-clean, CGO-free build held. Commit `cfcc3f3`.
-  **Live gate (a real C tool's full op set) stays Architect-gated**, like R9 1b/2b.
-  *Known coverage gap:* tested at the direct-virtual-method tier (highest-risk
-  piece — handle readback / nil-leaf on the first-ever `VirtualSymlink` success
-  return — is covered), but not yet at R9's intermediate over-the-wire tier
-  (`conformance_test.go`, a real CREATE-NF4LNK→LOOKUP→READLINK COMPOUND). One
-  wire-level symlink-create case would match R9's bar exactly.
+- **A1 — Structural ops ✅✅ (shim + LIVE, 2026-05-30):** `symlink`/`readlink`/
+  `link` wired into the shim (`VirtualSymlink`→`op->symlink`,
+  `VirtualGetAttributes` symlink-target→`op->readlink`, `VirtualLink`→`op->link`),
+  green against the passthrough stub (`TestFuseFSLinks` — real host symlink/
+  readlink/hard-link + EXDEV guard + target-shape round-trips), race-clean,
+  CGO-free build held. Commits `cfcc3f3`, `d110461`.
+  **LIVE GATE MET (Architect-run on macOS, commit `74e76af`):** the
+  `run-a1-live.sh` harness builds dylib + passthrough fixture, mounts through
+  the NFSv4 server (`mount_nfs`, unprivileged), and ran 6/6 A1 checks **over the
+  real mount** — `ln -s` + `readlink` + cat-through-link + absolute-target
+  round-trip + hard link with `nlink==2` — no kext, no FUSE-T, no root; clean
+  teardown. This is the over-the-wire tier (CREATE-NF4LNK→LOOKUP→READLINK→LINK as
+  real COMPOUNDs over the NFS client) that R9 1b/2b set as the bar.
 - **A1-ceiling — what A1 *can't* reach at the NFSv4.0 layer (a server-layer task,
   not shim wiring).** Verified by reading the dispatch before wiring (the
   advisor's "compiles-and-lies" check), these never reach the FSAL today:

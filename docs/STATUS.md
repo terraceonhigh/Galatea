@@ -37,14 +37,18 @@ the last entry:
    ship **dual-licensed — GPLv3 + commercial** (roadmap in
    `docs/DUAL-LICENSE-ROADMAP.md`); **Phase L** (LGPL clean-room purge) **deferred
    to the first commercial delivery** — feature phases first. First feature work
-   landed: **A1 structural ops — `symlink`/`readlink`/`link`** wired into the shim
-   (`TestFuseFSLinks`, race-clean; commit `cfcc3f3`). Verified-before-wiring
-   surfaced a **ceiling**: `chown`/`utimens`/`fallocate`/`statfs` can't reach the
-   FSAL at the NFSv4.0 layer (server rejects owner/time SETATTR; no ALLOCATE op) —
-   they're a server-side attribute task, not shim wiring (logged in the roadmap).)
+   landed and is **LIVE-PROVEN**: **A1 structural ops — `symlink`/`readlink`/
+   `link`** wired into the shim (`TestFuseFSLinks`, race-clean; commit `cfcc3f3`),
+   and the **A1 live gate met on macOS** (`run-a1-live.sh`, Architect-run: 6/6 A1
+   checks over a real `mount_nfs` mount — symlink/readlink/cat-through/abs-target/
+   hard-link nlink==2, no kext/FUSE-T/root, clean teardown; commit `74e76af`).
+   Verified-before-wiring surfaced a **ceiling**: `chown`/`utimens`/`fallocate`/
+   `statfs` can't reach the FSAL at the NFSv4.0 layer (server rejects owner/time
+   SETATTR; no ALLOCATE op) — a server-side attribute task, not shim wiring.)
 **Goal:** **R10 — dual-license viability (feature phases).** Milestone A and GOAL
 B (R9, incl. the marquee) are complete and banked. The active cursor is Phase A —
-full libfuse-2.x op coverage; A1's structural half (symlink/readlink/link) is in.
+full libfuse-2.x op coverage; A1's structural ops (symlink/readlink/link) are in
+and **live-proven on macOS**.
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
 pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
 `MISTAKES.md` M-003.)
