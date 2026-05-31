@@ -107,7 +107,15 @@ Today the shim implements ~18 of ~40 `fuse_operations`. A real tool needs the re
     introduced — an architecture decision (the `clock` shim is already imported).
   - `fallocate` — **no `OP_ALLOCATE`** in the lifted NFSv4.0 server (it's a 4.2
     op).
-  - `statfs` — no `virtual` hook; free-space is FATTR4 space-* through GETATTR.
+- **A1-statfs — free-space / `df` ✅✅ LIVE-PROVEN (2026-05-30).** `df` over the
+  mount showed `0 0 0 100%`; now it reports real capacity (`run-a1-live.sh` 11/11,
+  ~228 GB on the backing fs). Done **additively** — `SPACE_{TOTAL,FREE,AVAIL}` +
+  `FILES_{TOTAL,FREE,AVAIL}` as new `virtual.Attributes` fields (no interface
+  method, so Stepford's backend is untouched; it just leaves them unset). Server
+  advertises + encodes them (bit-only-if-present, ascending order); the shim
+  sources them from `op->statfs` (statvfs blocks→bytes via `f_frsize`). Headless:
+  `TestConformanceStatfs` (6 distinct values, each asserted in its own slot) +
+  `TestFuseFSStatfs`. Commit `a505b07`.
 - **A1-misc — `flush`/`fsync`/`fsyncdir`/`access`:** handled at the
   server/client layer without a distinct FSAL op (ACCESS via GETATTR+mode;
   flush/fsync are client-side or sane no-ops) — no shim work needed.

@@ -72,9 +72,10 @@ only for things that truly need a human (Finder/GUI demos, GitHub pushes).
 **Goal:** **R10 — dual-license viability (feature phases).** Milestone A and GOAL
 B (R9, incl. the marquee) are complete and banked. The active cursor is Phase A —
 full libfuse-2.x op coverage; A1's structural ops (symlink/readlink/link) **plus
-chmod + utimens (atime AND mtime)** are **live-proven on macOS** (`run-a1-live.sh`,
-**10/10**, self-run via `env bash …` — note: the cage intermittently gates bare
-`bash`/`sh`; lead with `env`). Remaining time gap: `SET_TO_SERVER_TIME` only
+chmod + utimens (atime AND mtime) + statfs/df** are **live-proven on macOS**
+(`run-a1-live.sh`, **11/11**, self-run via `env bash …` — note: the cage
+intermittently gates bare `bash`/`sh`; lead with `env`). `df` now reports real
+capacity (was `0 0 0 100%`). Remaining time gap: `SET_TO_SERVER_TIME` only
 (plain `touch` with no `-t`) — needs a wall clock, the deterministic-server
 architecture call (the `clock` shim is imported; awaits the Architect's decision).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
