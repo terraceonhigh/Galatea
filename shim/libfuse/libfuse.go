@@ -975,20 +975,48 @@ func galateaFuseMain(argc C.int, argv **C.char, op unsafe.Pointer) C.int {
 		fmt.Fprintln(os.Stderr, "galatea-libfuse: no mountpoint found in argv")
 		return 1
 	}
+	return serveAndBlock(mountpoint, (*C.struct_fuse_operations)(op), nil)
+}
 
-	cop := (*C.struct_fuse_operations)(op)
+// galateaFuseServe is the Go body behind the low-level fuse_loop()/fuse_loop_mt()
+// (defined in lowlevel.c). Real tools (sshfs, ntfs-3g) don't call fuse_main();
+// their main() runs fuse_mount→fuse_new→fuse_loop. The C façades carry the
+// mountpoint, op table, and user_data forward to here, where the actual serve
+// happens — the same body as fuse_main_real, via serveAndBlock. op and userData
+// arrive as unsafe.Pointer across the lowlevel.c/Go cgo boundary.
+//
+//export galateaFuseServe
+func galateaFuseServe(mountpoint *C.char, op unsafe.Pointer, userData unsafe.Pointer) C.int {
+	mp := C.GoString(mountpoint)
+	if mp == "" {
+		fmt.Fprintln(os.Stderr, "galatea-libfuse: fuse_loop with empty mountpoint")
+		return 1
+	}
+	return serveAndBlock(mp, (*C.struct_fuse_operations)(op), userData)
+}
+
+// serveAndBlock is the shared serve body for both the high-level (fuse_main_real)
+// and low-level (fuse_loop) entry points: run init() to establish private_data,
+// stand Galatea's NFSv4 server up over the app's operations, mount it with the
+// stock macOS NFS client, block until SIGINT/SIGTERM, then unmount and destroy.
+// userData is fuse_new()'s user_data (nil for the high-level path); init()'s
+// return value replaces it if present. Keeping this one function ensures the two
+// entry points can't drift on init/private_data ordering.
+func serveAndBlock(mountpoint string, cop *C.struct_fuse_operations, userData unsafe.Pointer) C.int {
 	// libfuse calls init() before any operation; cgofuse (and many filesystems)
 	// build their state there, and init's return value replaces private_data.
 	// Run it before the mount, so the first client op sees an initialised fs.
-	var privData unsafe.Pointer
+	privData := userData
 	if C.has_init(cop) != 0 {
-		privData = C.call_init(cop)
-		if privData != nil {
-			C.galatea_set_user_data(privData)
+		if p := C.call_init(cop); p != nil {
+			privData = p
 		}
 	}
+	if privData != nil {
+		C.galatea_set_user_data(privData)
+	}
 
-	root, resolver := NewFuseRoot(op)
+	root, resolver := NewFuseRoot(unsafe.Pointer(cop))
 	var program nfsproto.Nfs4Program = nfssrv.NewReadOnlyProgram(root, resolver)
 	server := rpcserver.NewServer(
 		map[uint32]rpcserver.Service{

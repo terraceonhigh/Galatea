@@ -109,5 +109,30 @@ int main(int argc, char *argv[]) {
 	}
 	strncpy(g_root, argv[1], sizeof(g_root) - 1);
 	char *fargv[2] = { argv[0], argv[2] };
+
+	// With GALATEA_PT_LOWLEVEL set, drive the *low-level* setup sequence — the
+	// exact path real tools (sshfs, ntfs-3g) take: fuse_parse_cmdline →
+	// fuse_mount → fuse_new → fuse_set_signal_handlers(fuse_get_session) →
+	// fuse_daemonize → fuse_loop[_mt] → teardown. This exercises the shim's
+	// low-level façade end to end, with no SSH/disk-image dependency. Default
+	// (unset) uses the high-level fuse_main, as before.
+	if (getenv("GALATEA_PT_LOWLEVEL")) {
+		struct fuse_args args = FUSE_ARGS_INIT(2, fargv);
+		char *mountpoint = NULL;
+		int multithreaded = 0, foreground = 0;
+		if (fuse_parse_cmdline(&args, &mountpoint, &multithreaded, &foreground) != 0)
+			return 1;
+		struct fuse_chan *ch = fuse_mount(mountpoint, &args);
+		if (!ch) return 1;
+		struct fuse *fuse = fuse_new(ch, &args, &pt_ops, sizeof(pt_ops), NULL);
+		if (!fuse) return 1;
+		fuse_set_signal_handlers(fuse_get_session(fuse));
+		fuse_daemonize(foreground);
+		int res = multithreaded ? fuse_loop_mt(fuse) : fuse_loop(fuse);
+		fuse_remove_signal_handlers(fuse_get_session(fuse));
+		fuse_unmount(mountpoint, ch);
+		fuse_destroy(fuse);
+		return res;
+	}
 	return fuse_main(2, fargv, &pt_ops, NULL);
 }
