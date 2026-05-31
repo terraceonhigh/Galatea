@@ -65,6 +65,11 @@ Today the shim implements ~18 of ~40 `fuse_operations`. A real tool needs the re
   passthrough stub (`TestFuseFSLinks` — real host symlink/readlink/hard-link +
   EXDEV guard), race-clean, CGO-free build held. Commit `cfcc3f3`.
   **Live gate (a real C tool's full op set) stays Architect-gated**, like R9 1b/2b.
+  *Known coverage gap:* tested at the direct-virtual-method tier (highest-risk
+  piece — handle readback / nil-leaf on the first-ever `VirtualSymlink` success
+  return — is covered), but not yet at R9's intermediate over-the-wire tier
+  (`conformance_test.go`, a real CREATE-NF4LNK→LOOKUP→READLINK COMPOUND). One
+  wire-level symlink-create case would match R9's bar exactly.
 - **A1-ceiling — what A1 *can't* reach at the NFSv4.0 layer (a server-layer task,
   not shim wiring).** Verified by reading the dispatch before wiring (the
   advisor's "compiles-and-lies" check), these never reach the FSAL today:
