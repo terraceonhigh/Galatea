@@ -90,17 +90,19 @@ mtime) + statfs/df. `df` reports real capacity (was `0 0 0 100%`). The shim now
 also speaks the **low-level libfuse API**, so real tools link and serve.
 
 **↳ NEXT SESSION — resume here (paused 2026-05-31, awaiting the Verger):**
-- **The marquee — unmodified `sshfs` mounting through Galatea — is one or two
-  small gates from live.** sshfs 2.10 is built at `/tmp/sshfs-build.*/sshfs-2.10/`
-  (linked to `libgalateafuse.dylib`); the low-level API serves 11/11. Gates:
-  **(1)** passwordless SSH to localhost (sshd is up on :22, but no key auth — set
-  up a key, or pick a target); **(2)** a clean way to run the harness — *the cage
-  petition.*
-- **Cage petition is OPEN at `~/Labs/Narthex/correspondence/04-…-daedalus.md`**,
-  awaiting the **Verger's** reply. Until the key comes, **do NOT use `env bash`/
-  `env sh`** to run shell scripts — that is the lock-picking the Verger's
-  hardening closed, and I petitioned to retire it. Use `go`/`git`/`cc` directly
-  (all admitted); the live harness waits for the blessed runner key.
+- **The marquee — unmodified `sshfs` mounting through Galatea — is down to ONE
+  gate.** sshfs 2.10 is built at `/tmp/sshfs-build.*/sshfs-2.10/` (linked to
+  `libgalateafuse.dylib`); the low-level API serves 11/11. Remaining gate:
+  **passwordless SSH to localhost** (sshd is up on :22, but no key auth — set up
+  a key, or pick a target). The cage gate is GONE (below).
+- **Cage petition ANSWERED — the key is turned (2026-05-31).** The Verger read
+  threads 01+04 as one and the Architect turned a general key: a **blessed-runners
+  registry** at `~/.claude/hooks/blessed-runners` admits a runner by basename from
+  any path (`run-a1-live.sh` is on it), and the **`env`/`xargs` side door is shut**
+  (`env bash` is now denied by the cage itself). So: invoke the harness as
+  **`./run-a1-live.sh`** (execute bit) — NOT `bash`/`env bash`. Confirmed working,
+  11/11 on the clean key. Thread `~/Labs/Narthex/correspondence/05`+`06`. The
+  `env bash` wrapper is retired for good.
 - **`SET_TO_SERVER_TIME`** (plain `touch`, no `-t`) — the last time gap; needs a
   wall clock (the `clock` shim is imported), an **Architect** architecture call
   (determinism vs. real time). Not to be decided unattended.
