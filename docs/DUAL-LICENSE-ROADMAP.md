@@ -59,10 +59,30 @@ Keep the LGPL quarantined and labelled (VENDOR.md already does) until then.
 
 Today the shim implements ~18 of ~40 `fuse_operations`. A real tool needs the rest.
 
-- **A1 — Mechanical ops:** `symlink`/`readlink`/`link`, `chown`, `utimens`,
-  `statfs` (free-space — also unblocks some write mounts), `flush`, `fsync`/
-  `fsyncdir`, `access`, `fallocate`. Each maps to an NFS op or a sane default.
-  Translation tests, same de-risk discipline as R9. ~1–2 wks.
+- **A1 — Structural ops ✅ (shim half, 2026-05-30):** `symlink`/`readlink`/`link`
+  wired into the shim (`VirtualSymlink`→`op->symlink`, `VirtualGetAttributes`
+  symlink-target→`op->readlink`, `VirtualLink`→`op->link`), green against the
+  passthrough stub (`TestFuseFSLinks` — real host symlink/readlink/hard-link +
+  EXDEV guard), race-clean, CGO-free build held. Commit `cfcc3f3`.
+  **Live gate (a real C tool's full op set) stays Architect-gated**, like R9 1b/2b.
+- **A1-ceiling — what A1 *can't* reach at the NFSv4.0 layer (a server-layer task,
+  not shim wiring).** Verified by reading the dispatch before wiring (the
+  advisor's "compiles-and-lies" check), these never reach the FSAL today:
+  - `chown` — the server's `fattr4ToAttributes` returns **NFS4ERR_PERM** for
+    `OWNER`/`OWNER_GROUP`.
+  - `utimens` — same decoder rejects `TIME_MODIFY`/everything-else with
+    **NFS4ERR_ATTRNOTSUPP**; also `virtual.Attributes` carries only mtime, no
+    atime.
+  - `fallocate` — **no `OP_ALLOCATE`** in the lifted NFSv4.0 server (it's a 4.2
+    op).
+  - `statfs` — no `virtual` hook; free-space is FATTR4 space-* through GETATTR.
+  Unblocking these means extending the *server's* `fattr4ToAttributes` /
+  `attributesToFattr4` (and adding atime to `virtual.Attributes`), with its own
+  over-the-wire conformance test — a distinct, larger piece than the shim ops.
+  ~1–2 wks for the server-side attribute work when prioritised.
+- **A1-misc — `flush`/`fsync`/`fsyncdir`/`access`:** handled at the
+  server/client layer without a distinct FSAL op (ACCESS via GETATTR+mode;
+  flush/fsync are client-side or sane no-ops) — no shim work needed.
 - **A2 — Extended attributes:** `setxattr`/`getxattr`/`listxattr`/`removexattr` →
   NFSv4 named attributes (today the FSAL reports `HasNamedAttributes=false`; real
   support wires named-attr directories through the server + FSAL). ~1–2 wks, or

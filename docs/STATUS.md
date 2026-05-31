@@ -32,9 +32,19 @@ the last entry:
    of the FSAL contract. To let her mount from her own repo, added a public root
    package: `galatea.Serve(ctx, root, resolver, addr)` (the server lives in
    `internal/`, unimportable externally). Replied to her in Stepford.)
-**Goal:** **GOAL B (R9) — the libfuse maneuver.** Milestone A
-([`GOAL.md`](GOAL.md)) is complete and banked. The active cursor is the libfuse
-shim's *marquee* — see below.
+
+4. **R10 dual-license decided + Phase A1 structural ops (2026-05-30).** Decision:
+   ship **dual-licensed — GPLv3 + commercial** (roadmap in
+   `docs/DUAL-LICENSE-ROADMAP.md`); **Phase L** (LGPL clean-room purge) **deferred
+   to the first commercial delivery** — feature phases first. First feature work
+   landed: **A1 structural ops — `symlink`/`readlink`/`link`** wired into the shim
+   (`TestFuseFSLinks`, race-clean; commit `cfcc3f3`). Verified-before-wiring
+   surfaced a **ceiling**: `chown`/`utimens`/`fallocate`/`statfs` can't reach the
+   FSAL at the NFSv4.0 layer (server rejects owner/time SETATTR; no ALLOCATE op) —
+   they're a server-side attribute task, not shim wiring (logged in the roadmap).)
+**Goal:** **R10 — dual-license viability (feature phases).** Milestone A and GOAL
+B (R9, incl. the marquee) are complete and banked. The active cursor is Phase A —
+full libfuse-2.x op coverage; A1's structural half (symlink/readlink/link) is in.
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
 pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
 `MISTAKES.md` M-003.)
