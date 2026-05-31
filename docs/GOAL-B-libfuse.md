@@ -1,11 +1,14 @@
 # GOAL B — the libfuse maneuver (the FUSE-T wedge)
 
-Status: **read + write paths proven live (2026-05-30).** Phase 0 (cgo callback
-mechanism), Phase 1 (translation + live read mount of unmodified `hello.c`), and
-Phase 2 (the write path — live read-write passthrough mount) are done — no kext,
-no FUSE-T, no root. The maneuver is proven; the code is `shim/libfuse/`. What
-remains is breadth (the marquee real-world tool — which needs the dyld
-drop-in-replacement work deferred from the spike — and the long tail), not
+Status: **the maneuver is proven through a real third-party FUSE library
+(2026-05-30).** Phases 0–2 (cgo mechanism; translation + live read mount of
+unmodified `hello.c`; live read-write passthrough), Phase 3 (the `fuse_opt` ABI
+layer), and Phase 4 — **the marquee: cgofuse, the engine `rclone mount` binds
+through, runs read-write on the shim** (its runtime `dlopen` redirected via
+`CGOFUSE_LIBFUSE_PATH`; mkdir/write/read/rename/rm live). No kext, no FUSE-T, no
+macFUSE. Code is `shim/libfuse/`. What remains is an *unqualified* famous-named
+binary (a C tool — one Go runtime; or full rclone with the two-Go-runtime caveat)
+and the long tail (full ops, then GOAL B's FSKit endgame) — breadth, not
 feasibility. This is the plan for Galatea's second goal (see
 [`GOAL.md`](GOAL.md) — "the libfuse C ABI / sshfs-rclone drop-in"). Milestone A
 (read-write NFSv4 mount on macOS, unprivileged) is the substrate this builds on

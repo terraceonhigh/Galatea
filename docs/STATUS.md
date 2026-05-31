@@ -19,13 +19,12 @@ the last entry:
    project **Onfim** (`~/Labs/Onfim`) was bootstrapped for the FSKit+Rust-NTFS
    "ruin Paragon" cathedral (see its charge).
 
-2. **GOAL B — `shim/libfuse/` — the FUSE-T wedge, proven (R9).** A drop-in
-   `libfuse.dylib` over Galatea's server. Read (unmodified `hello.c` mounts), write
-   (a passthrough mounts read-write, create/write/mkdir/rename/rm land in the
-   backing store), and the **fuse_opt ABI layer** (the `fuse_opt_*` family +
-   `fuse_get_context` + `fuse_version`) — all live, all committed. `fixture/optfs.c`
-   proves the exact sshfs-class call pattern works through Galatea. See
-   `docs/GOAL-B-libfuse.md` and ROADMAP R9.)
+2. **GOAL B — `shim/libfuse/` — the FUSE-T wedge, proven incl. the marquee (R9).**
+   A drop-in `libfuse.dylib` over Galatea's server: read (unmodified `hello.c`),
+   write (read-write passthrough), the **fuse_opt ABI layer**, and **the marquee —
+   cgofuse, the library `rclone mount` binds through, runs read-write on the shim**
+   (its `dlopen` redirected via `CGOFUSE_LIBFUSE_PATH`; no kext/FUSE-T/macFUSE).
+   All live, all committed. See `docs/GOAL-B-libfuse.md` and ROADMAP R9.)
 **Goal:** **GOAL B (R9) — the libfuse maneuver.** Milestone A
 ([`GOAL.md`](GOAL.md)) is complete and banked. The active cursor is the libfuse
 shim's *marquee* — see below.
@@ -113,37 +112,33 @@ pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
 
 ## Cursor — next increment
 
-**The active increment is GOAL B's marquee — a *famous-named* FUSE tool running on
-the shim.** The libfuse maneuver itself is proven (read + write + the fuse_opt ABI
-layer; `shim/libfuse/`, ROADMAP R9): `fixture/optfs.c` is a from-source FUSE program
-using the full sshfs-class call pattern (`fuse_opt_parse` + `fuse_main(user_data)` +
-`fuse_get_context()->private_data`), live on Galatea. What's left is recognizability,
-and the chosen vehicle is **rclone**.
+**The marquee is substantially achieved: cgofuse — the library `rclone mount` binds
+through — runs read-write on the shim** (ROADMAP R9 Phase 4; commit 534f37e). Built
+cgofuse's `memfs`, redirected its runtime `dlopen` to our dylib with
+`CGOFUSE_LIBFUSE_PATH`, and mkdir/write/read-back/rename/rm work live — no kext, no
+FUSE-T, no macFUSE. The earlier guess (that cgofuse needs the lower-level
+`fuse_new`/`fuse_loop` API) was **wrong**: the audit showed cgofuse `dlsym`s only
+`fuse_main_real`, `fuse_get_context`, `fuse_opt_parse`, `fuse_opt_free_args` — all
+already exported. The real work was three libfuse-lifecycle gaps: init/destroy, a
+pure-C readdir filler (a Go-export callback re-enters our Go runtime from the app's
+— Go can't), and open/release handle-bracketing (memfs indexes an openmap by the
+fh from opendir/open).
 
-**The rclone plan — start here:**
-1. **Audit what cgofuse needs (don't guess).** `rclone mount` uses
-   `github.com/winfsp/cgofuse`, which **dlopen**s the FUSE library at runtime — so
-   no relink; we can point it at our dylib. But it likely uses the *lower-level* API
-   (`fuse_new`/`fuse_mount`/`fuse_loop`/`fuse_destroy`/`fuse_unmount`/
-   `fuse_set_signal_handlers`/`fuse_session_*`), which the shim does **not** export
-   yet (we have `fuse_main_real` + `fuse_opt_*` + `fuse_get_context` + `fuse_version`
-   — `nm -gU` the dylib to confirm). Clone cgofuse (network is up) and read its
-   `dlsym` list (`host_cgo.go`) — that is the exact symbol set to implement.
-2. **Implement the missing session-style API** over the server: refactor so both
-   `fuse_main_real` and cgofuse build on `fuse_new`/`fuse_mount`/`fuse_loop`
-   (listen + `mount_nfs` + serve), plus `fuse_unmount`/`fuse_destroy` and
-   signal-handler stubs. Keep the de-risk discipline: a translation test first.
-3. **Point cgofuse at our dylib** via its lib-search override (env / a controlled
-   path) — do **not** replace the system `/usr/local/lib/libfuse.dylib`.
-4. **Run `rclone mount`** of a local/memory remote; `ls`/`cat`/write through it.
-
-**Walls already mapped (don't re-discover):** modern `sshfs` is FUSE3 (shim is 2.9);
-FUSE-2.x tools (`ntfs-3g`, old sshfs, `bindfs`) are autotools projects and
-`autoconf`/`automake`/`meson` aren't installed. rclone/cgofuse sidesteps both
-(runtime dlopen, no autotools) — hence the choice.
+**What's left on the marquee (pick one; none is a feasibility question):**
+1. **An *unqualified* famous binary.** cgofuse proves the integration with rclone's
+   own engine; for a named-tool screenshot the cleanest is a **C** tool (`ntfs-3g`,
+   thematically apt — or `sshfs`/`bindfs`): one Go runtime (ours), no dual-runtime
+   tax. Gated on a build toolchain (`autoconf`/`automake`, not installed) — a `brew
+   install` (network is up) + a from-source relink against the shim.
+2. **Full `rclone mount`.** `go install` rclone, run with `CGOFUSE_LIBFUSE_PATH`.
+   Carries the two-co-resident-Go-runtimes tax (signal/scheduler): memfs is clean,
+   a heavy concurrent rclone is unproven — budget for a runtime fault or scope to
+   "works for light use."
+3. **The long tail** toward GOAL B's endgame: more ops, then the FSKit module (the
+   native, no-loopback target — Onfim's charge frames the cathedral).
 
 The Milestone-A *gated/deferred* items below are real but **secondary** to this
-active R9 cursor. ([`ROADMAP.md`](ROADMAP.md) R9, [`GOAL-B-libfuse.md`](GOAL-B-libfuse.md))
+active R9 line. ([`ROADMAP.md`](ROADMAP.md) R9, [`GOAL-B-libfuse.md`](GOAL-B-libfuse.md))
 
 **Gated — needs a gate opened (environment/permission I lack):**
 
@@ -180,14 +175,16 @@ active R9 cursor. ([`ROADMAP.md`](ROADMAP.md) R9, [`GOAL-B-libfuse.md`](GOAL-B-l
 > **⚠ Do NOT vendor `util` wholesale** — jsonnet/protobuf/grpc/prometheus/uuid;
 > vendor by symbol. (Retained; applies to any future bb-storage grab, e.g. R6.)
 
-Loop step to resume at: **step 2 (Scope) for the rclone marquee** — begin with
-step 1 above (audit cgofuse's `dlsym` symbol set), then implement the session-style
-API the shim still lacks. Milestone A is banked and tagged (`v0.1.0-alpha`,
-public); its remaining gated items (pjdfstest on Linux CI, pynfs `pip install ply`,
-sleep-wake/Finder on a non-headless Mac) and deferred items (osfs-write,
-Mknod/Link/Symlink) are tallied in [`ACCEPTANCE.md`](ACCEPTANCE.md) — pick them up
-only when their gate opens or as a deliberate side-loop; the rclone marquee is the
-active line.
+Loop step to resume at: **the libfuse maneuver is proven end to end** (read,
+write, the fuse_opt ABI, and the marquee — cgofuse, rclone's engine, read-write on
+the shim). Next is one of the three "what's left on the marquee" options above
+(an *unqualified* famous C-tool binary — recommended; full rclone with the
+dual-runtime caveat; or the long tail toward FSKit) — pick at **step 2 (Scope)**.
+Milestone A is banked and tagged (`v0.1.0-alpha`, public); its gated items
+(pjdfstest on Linux CI, pynfs `pip install ply`, sleep-wake/Finder on a
+non-headless Mac) and deferred items (osfs-write, Mknod/Link/Symlink) are tallied
+in [`ACCEPTANCE.md`](ACCEPTANCE.md) — pick up only when a gate opens or as a
+deliberate side-loop.
 
 > **Tooling gotchas this run:** (1) `cd` in Bash *persists* the working dir across
 > calls and breaks later relative-path commands — use absolute paths / `git -C`.

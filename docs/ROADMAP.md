@@ -125,14 +125,21 @@ and no closed-source daemon. Full plan in [`GOAL-B-libfuse.md`](GOAL-B-libfuse.m
   using `fuse_opt_parse` (`-o root=DIR`) + `fuse_main(user_data)` +
   `fuse_get_context()->private_data`, mounted live through Galatea. The shim now
   speaks the sshfs-class call pattern.
-- **Next (marquee, gated):** a *famous-named* tool. The engineering is done (optfs
-  is a from-source real-FUSE-tool on the shim); what's left is acquiring one. The
-  walls: modern `sshfs` is FUSE3 (shim is 2.9); FUSE-2.x tools (`ntfs-3g`, old
-  `sshfs`, `bindfs`) are autotools projects and `autoconf`/`automake`/`meson`
-  aren't installed; `rclone` (cgofuse) is plausible but needs the cgofuse-loads-
-  our-dylib path worked out. A focused from-source build session with a toolchain
-  install — the correct model is relink-against-the-shim (FUSE-T's own), not a
-  binary hijack. Then the long tail (full ops, FSKit).
+- **Phase 4 ✅ — MARQUEE: cgofuse (rclone's FUSE engine) runs read-write on the
+  shim.** cgofuse — the library `rclone mount` binds through — runs unmodified on
+  Galatea: built its `memfs` example, redirected its runtime `dlopen` to our dylib
+  via `CGOFUSE_LIBFUSE_PATH`, and mkdir/write/read-back/rename/rm all work live (no
+  kext, no FUSE-T, no macFUSE). Required closing three libfuse-lifecycle gaps the
+  path-based C fixtures didn't exercise: **init/destroy**, a **pure-C readdir
+  filler** (a Go-export callback re-enters our Go runtime from the app's — Go can't
+  do that), and **open/release handle-bracketing** (memfs indexes an openmap by the
+  fh from opendir/open). DEC in the commit (534f37e).
+- **Caveats / what's left:** per-op open/release is stateless-pragmatic, not full
+  handle-threading across an NFS open session. And two co-resident Go runtimes
+  (rclone is Go) owe a background signal/scheduler tax — memfs is clean, heavy
+  concurrent rclone is unproven. The architecturally-clean *unqualified* famous
+  marquee is a **C** tool (sshfs/ntfs-3g — one Go runtime, ours), gated only on a
+  build toolchain. Then the long tail (full ops, FSKit / GOAL B's endgame).
 
 ---
 
