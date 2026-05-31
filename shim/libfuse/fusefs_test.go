@@ -228,6 +228,21 @@ func TestFuseFSLinks(t *testing.T) {
 		t.Fatalf("readlink target: %q ok=%v (want f.txt)", got, ok)
 	}
 
+	// Symlink targets are arbitrary text, not always normalizable paths: an
+	// absolute target and a multi-component relative one must round-trip VERBATIM
+	// through parserToString (pt_symlink stores the target unmodified, so a wrong
+	// Readlink here means our Parser→string transform mangled it).
+	for i, tgt := range []string{"/abs/elsewhere", "../sibling/x", "a/b/c"} {
+		name := virtual.MustNewComponent("ln" + string(rune('0'+i)))
+		if _, _, st := fsRoot.VirtualSymlink(ctx, vpath.UNIXFormat.NewParser(tgt),
+			name, virtual.AttributesMaskFileHandle, &virtual.Attributes{}); st != virtual.StatusOK {
+			t.Fatalf("symlink %q: %v", tgt, st)
+		}
+		if got, err := os.Readlink(filepath.Join(root, name.String())); err != nil || got != tgt {
+			t.Fatalf("symlink target round-trip: stored %q, want %q (err=%v)", got, tgt, err)
+		}
+	}
+
 	// link: VirtualLink(name="hard", target leaf) → host hard link, nlink == 2.
 	if _, st := fsRoot.VirtualLink(ctx, virtual.MustNewComponent("hard"), target, 0, &virtual.Attributes{}); st != virtual.StatusOK {
 		t.Fatalf("link: %v", st)
