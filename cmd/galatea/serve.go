@@ -3,15 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net"
 	"os"
-	"strings"
 	"time"
 
-	nfssrv "github.com/terraceonhigh/galatea/internal/nfsv4"
-	nfsv4 "github.com/terraceonhigh/galatea/internal/xdr/pkg/protocols/nfsv4"
-	"github.com/terraceonhigh/galatea/internal/xdr/pkg/rpcserver"
+	"github.com/terraceonhigh/galatea"
 	"github.com/terraceonhigh/galatea/pkg/osfs"
 	"github.com/terraceonhigh/galatea/pkg/virtual"
 )
@@ -27,37 +23,12 @@ func slowTree(delay time.Duration) virtual.Directory {
 	})
 }
 
-// loggingProgram wraps an Nfs4Program and logs each COMPOUND's op sequence and
-// result status. Enabled by GALATEA_TRACE=1; a diagnosis aid for matching the
-// macOS client's actual op sequence (e.g. how `>` conveys truncate).
-type loggingProgram struct{ inner nfsv4.Nfs4Program }
-
-func (p loggingProgram) NfsV4Nfsproc4Null(ctx context.Context) error {
-	log.Print("NULL")
-	return p.inner.NfsV4Nfsproc4Null(ctx)
-}
-
-func (p loggingProgram) NfsV4Nfsproc4Compound(ctx context.Context, args *nfsv4.Compound4args) (*nfsv4.Compound4res, error) {
-	ops := make([]string, len(args.Argarray))
-	for i, a := range args.Argarray {
-		ops[i] = strings.TrimPrefix(fmt.Sprintf("%T", a), "*nfsv4.NfsArgop4_OP_")
-	}
-	res, err := p.inner.NfsV4Nfsproc4Compound(ctx, args)
-	status := "nil-res"
-	if res != nil {
-		status = fmt.Sprintf("%v", res.Status)
-	}
-	log.Printf("COMPOUND [%s] -> %s", strings.Join(ops, " "), status)
-	return res, err
-}
-
-// demoTree is a small read-only in-memory FSAL for `galatea serve` to expose.
+// demoTree is a small writable in-memory FSAL for `galatea serve` to expose.
 //
-// Why a demo tree and not the osfs backend: serving requires the backend to
-// supply file handles + a handle resolver (DEC-017 Option B), which is
-// implemented for the in-memory FSAL (pkg/virtual) but not yet for osfs. Once
-// osfs grows inode-based handles, `serve` can take a host directory like the
-// other subcommands.
+// Why a demo tree and not the osfs backend by default: serving requires the
+// backend to supply file handles + a handle resolver (DEC-017 Option B), which
+// is implemented for the in-memory FSAL (pkg/virtual) and osfs both; the demo
+// tree is the writable default so `mkdir`/`echo > file`/`rm` work out of the box.
 func demoTree() virtual.Directory {
 	rwx := virtual.PermissionsRead | virtual.PermissionsWrite | virtual.PermissionsExecute
 	root := virtual.NewWritableMemoryDirectory(rwx)
@@ -78,13 +49,12 @@ func demoTree() virtual.Directory {
 	return root
 }
 
-// doServe stands the lifted NFSv4 server up on a loopback TCP port until ctx is
-// cancelled (SIGINT/SIGTERM, wired in main). With hostDir empty it serves the
-// in-memory demo tree; otherwise it serves that host directory read-only via
-// osfs. This is the R3 → R4 bridge: a real socket a macOS NFS client can connect
-// to (proven live — DEC-018). On ctx-cancel it closes the listener and returns
-// nil — graceful shutdown for AC6 (in-flight connections are left to drain; NFS
-// clients tolerate a server that restarts).
+// doServe builds the FSAL the CLI exposes — a slow-read probe (GALATEA_SLOW_READ),
+// the writable in-memory demo (no host dir), or a read-only host directory via
+// osfs — then serves it with galatea.Serve until ctx is cancelled (SIGINT/SIGTERM,
+// wired in main). This is the R3 → R4 bridge: a real socket the macOS NFS client
+// mounts (proven live — DEC-018). The core server loop now lives in the public
+// galatea.Serve (DEC-022); this is just the CLI's backend selection over it.
 func doServe(ctx context.Context, hostDir, addr string) error {
 	var root virtual.Directory
 	var resolver virtual.HandleResolver
@@ -104,48 +74,18 @@ func doServe(ctx context.Context, hostDir, addr string) error {
 		}
 		root, resolver, label = r, osfs.NewHandleResolver(r), hostDir+" [read-only]"
 	}
-	var program nfsv4.Nfs4Program = nfssrv.NewReadOnlyProgram(root, resolver)
-	if os.Getenv("GALATEA_TRACE") != "" {
-		program = loggingProgram{inner: program}
-	}
-	server := rpcserver.NewServer(
-		map[uint32]rpcserver.Service{
-			nfsv4.NFS4_PROGRAM_PROGRAM_NUMBER: nfsv4.NewNfs4ProgramService(program),
-		},
-		nfssrv.NewSystemAuthenticator(),
-	)
 
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("listen %s: %w", addr, err)
+	port := addr
+	if _, p, err := net.SplitHostPort(addr); err == nil {
+		port = p
 	}
-	defer ln.Close()
-
-	port := ln.Addr().(*net.TCPAddr).Port
-	fmt.Printf("galatea: serving %s over NFSv4 on %s\n", label, ln.Addr())
-	fmt.Printf("galatea: try:  mount_nfs -o vers=4.0,port=%d,mountport=%d,tcp localhost:/ /tmp/galatea-mnt\n", port, port)
+	fmt.Printf("galatea: serving %s over NFSv4 on %s\n", label, addr)
+	fmt.Printf("galatea: try:  mount_nfs -o vers=4.0,port=%s,mountport=%s,tcp localhost:/ /tmp/galatea-mnt\n", port, port)
 	fmt.Printf("galatea: then: ls /tmp/galatea-mnt   (Ctrl-C to stop)\n")
 
-	// Graceful shutdown: when ctx is cancelled, close the listener so the
-	// blocking Accept below returns. We then distinguish that expected
-	// wake-up (ctx.Err() != nil → return nil) from a genuine Accept error.
-	go func() {
-		<-ctx.Done()
-		_ = ln.Close()
-	}()
-
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			if ctx.Err() != nil {
-				fmt.Println("\ngalatea: signal received, shutting down")
-				return nil
-			}
-			return err
-		}
-		go func() {
-			_ = server.HandleConnection(conn, conn)
-			_ = conn.Close()
-		}()
+	err := galatea.Serve(ctx, root, resolver, addr)
+	if err == nil {
+		fmt.Println("\ngalatea: signal received, shut down")
 	}
+	return err
 }
