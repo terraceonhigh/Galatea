@@ -56,4 +56,39 @@ The `references/` clones are read-only working copies for Daedalus to study and 
 
 ## Status
 
-Day 0. The repository was initialised on 2026-05-17 with the FOSS bases cloned and the opening letter from the Architect written. No Galatea code yet — Phase 1 begins with Daedalus's first letter back.
+**Phase 1, first increment landed (2026-05-29).** The repository was initialised
+on 2026-05-17 with the FOSS bases cloned and the charge letter from Mercer
+written. On 2026-05-29 the de-coupling was measured against the source (see
+[`docs/coupling-map.md`](docs/coupling-map.md)) and the first code landed:
+
+- A standalone Go module, `github.com/terraceonhigh/galatea`.
+- [`pkg/virtual`](pkg/virtual) — Galatea's public FSAL interface
+  (`Node`/`Directory`/`Leaf`), hand-cut from bb-rex's `virtual` package and
+  **clean of any bb-storage dependency**, satisfying the Phase-1 interface
+  criterion.
+- [`pkg/osfs`](pkg/osfs) — a read-only FSAL backed by the local OS filesystem
+  (the first backend over a real data source), plus the in-memory test FSAL.
+- [`cmd/galatea`](cmd/galatea) — a CLI that navigates a directory **through** the
+  FSAL, and a green test suite (`go test ./...`).
+
+The reasoning for every decision so far lives in
+[`docs/DECISIONS.md`](docs/DECISIONS.md) (DEC-001 … DEC-006).
+
+### Try it
+
+There is no NFS mount yet (that needs the server lift and root privileges). But
+the FSAL is runnable today: `galatea` points an `osfs` backend at a host
+directory and drives it through the same calls an NFS server would make —
+`VirtualLookup`, `VirtualReadDir`, `VirtualRead`, `VirtualGetAttributes`. It is
+the NFS client a future mount will provide, in CLI form, no privileges needed.
+
+```sh
+go run ./cmd/galatea ls   .            # list a directory through the FSAL
+go run ./cmd/galatea stat . go.mod     # show a node's attributes
+go run ./cmd/galatea cat  . go.mod     # read a file
+go run ./cmd/galatea tree . pkg        # recurse
+```
+
+Still ahead in Phase 1: lift bb-rex's NFSv4 server and reconcile it with this
+interface (the vendor-vs-shim fork, **DEC-007**), then Phase 2's macOS mount —
+at which point the same backends become a real Finder volume.

@@ -1,8 +1,21 @@
 .env
 .DS_Store
+.commitmsg.tmp
+
+# Built CLI binary (built ad hoc with `go build ./cmd/galatea`)
+/galatea
+/galatea-bin
+
+# Ad-hoc NFS mountpoint used when testing `galatea serve` live.
+/galatea-mnt
 
 # Local-only working clones of third-party FOSS repositories. Daedalus
 # reads and lifts from these; they do not enter Galatea's git tree.
 # The README is tracked; the actual clones are not.
 references/*
 !references/README.md
+
+# The visibility covenant, enforced in code. Marginalia marked `visible: no`
+# are written for myself; they live here, on disk, and never enter the tree
+# that gets published. The flag is the covenant; this line is the lock.
+atelier/marginalia/private/

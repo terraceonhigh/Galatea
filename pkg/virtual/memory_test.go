@@ -1,0 +1,302 @@
+package virtual
+
+import (
+	"context"
+	"testing"
+)
+
+// Compile-time proof that the in-memory types satisfy the interfaces.
+var (
+	_ Directory = (*memoryDirectory)(nil)
+	_ Leaf      = (*memoryFile)(nil)
+)
+
+const helloContents = "Hello, Galatea."
+
+// buildTree returns a root directory containing one file (hello.txt) and
+// one empty subdirectory (sub).
+func buildTree() Directory {
+	file := NewMemoryFile(2, PermissionsRead, []byte(helloContents))
+	sub := NewMemoryDirectory(3, PermissionsRead|PermissionsExecute, nil)
+	return NewMemoryDirectory(1, PermissionsRead|PermissionsExecute, map[string]Node{
+		"hello.txt": file.(Node),
+		"sub":       sub.(Node),
+	})
+}
+
+func TestLookupFileAttributes(t *testing.T) {
+	root := buildTree()
+	ctx := context.Background()
+
+	var attrs Attributes
+	child, st := root.VirtualLookup(ctx, MustNewComponent("hello.txt"),
+		AttributesMaskFileType|AttributesMaskSizeBytes|AttributesMaskInodeNumber, &attrs)
+	if st != StatusOK {
+		t.Fatalf("VirtualLookup(hello.txt) = %v, want StatusOK", st)
+	}
+	if !child.IsSet() {
+		t.Fatal("returned child is not set")
+	}
+	if got := attrs.GetFileType(); got != FileTypeRegularFile {
+		t.Errorf("file type = %v, want FileTypeRegularFile", got)
+	}
+	if got, ok := attrs.GetSizeBytes(); !ok || got != uint64(len(helloContents)) {
+		t.Errorf("size = (%d, %v), want (%d, true)", got, ok, len(helloContents))
+	}
+	if got := attrs.GetInodeNumber(); got != 2 {
+		t.Errorf("inode = %d, want 2", got)
+	}
+}
+
+func TestLookupMissing(t *testing.T) {
+	root := buildTree()
+	var attrs Attributes
+	_, st := root.VirtualLookup(context.Background(), MustNewComponent("nope"), AttributesMaskFileType, &attrs)
+	if st != StatusErrNoEnt {
+		t.Errorf("VirtualLookup(nope) = %v, want StatusErrNoEnt", st)
+	}
+}
+
+func TestReadFile(t *testing.T) {
+	root := buildTree()
+	ctx := context.Background()
+
+	var attrs Attributes
+	child, st := root.VirtualLookup(ctx, MustNewComponent("hello.txt"), AttributesMaskFileType, &attrs)
+	if st != StatusOK {
+		t.Fatalf("lookup: %v", st)
+	}
+	_, leaf := child.GetPair()
+	if leaf == nil {
+		t.Fatal("child is not a leaf")
+	}
+
+	if st := leaf.VirtualOpenSelf(ctx, ShareMaskRead, &OpenExistingOptions{}, 0, &Attributes{}); st != StatusOK {
+		t.Fatalf("VirtualOpenSelf: %v", st)
+	}
+	buf := make([]byte, 64)
+	n, eof, st := leaf.VirtualRead(buf, 0)
+	if st != StatusOK {
+		t.Fatalf("VirtualRead: %v", st)
+	}
+	if !eof {
+		t.Error("expected eof for a single full read")
+	}
+	if got := string(buf[:n]); got != helloContents {
+		t.Errorf("read %q, want %q", got, helloContents)
+	}
+	leaf.VirtualClose(ShareMaskRead)
+}
+
+func TestReadFileOffset(t *testing.T) {
+	leaf := NewMemoryFile(9, PermissionsRead, []byte(helloContents))
+	buf := make([]byte, 5)
+	n, eof, st := leaf.VirtualRead(buf, 7) // "Galat"
+	if st != StatusOK {
+		t.Fatalf("VirtualRead: %v", st)
+	}
+	if eof {
+		t.Error("did not expect eof mid-file")
+	}
+	if got := string(buf[:n]); got != "Galat" {
+		t.Errorf("read %q, want %q", got, "Galat")
+	}
+}
+
+func TestReadAtAndPastEOF(t *testing.T) {
+	leaf := NewMemoryFile(9, PermissionsRead, []byte(helloContents))
+	size := uint64(len(helloContents))
+	buf := make([]byte, 8)
+	// At EOF and strictly past it must both report (0, eof) without panic.
+	for _, offset := range []uint64{size, size + 1, size + 100} {
+		n, eof, st := leaf.VirtualRead(buf, offset)
+		if st != StatusOK {
+			t.Errorf("VirtualRead(offset=%d) status = %v, want StatusOK", offset, st)
+		}
+		if n != 0 || !eof {
+			t.Errorf("VirtualRead(offset=%d) = (n=%d, eof=%v), want (0, true)", offset, n, eof)
+		}
+	}
+}
+
+type collectingReporter struct {
+	names []string
+}
+
+func (r *collectingReporter) ReportEntry(nextCookie uint64, name Component, child DirectoryChild, attributes *Attributes) bool {
+	r.names = append(r.names, name.String())
+	return true
+}
+
+func TestReadDirSorted(t *testing.T) {
+	root := buildTree()
+	var rep collectingReporter
+	if st := root.VirtualReadDir(context.Background(), 0, AttributesMaskFileType, &rep); st != StatusOK {
+		t.Fatalf("VirtualReadDir: %v", st)
+	}
+	want := []string{"hello.txt", "sub"}
+	if len(rep.names) != len(want) {
+		t.Fatalf("entries = %v, want %v", rep.names, want)
+	}
+	for i := range want {
+		if rep.names[i] != want[i] {
+			t.Errorf("entry[%d] = %q, want %q", i, rep.names[i], want[i])
+		}
+	}
+}
+
+func TestGetFileInfo(t *testing.T) {
+	file := NewMemoryFile(2, PermissionsRead|PermissionsExecute, []byte(helloContents))
+	fi := GetFileInfo(MustNewComponent("hello.txt"), file)
+	if fi.Name().String() != "hello.txt" {
+		t.Errorf("name = %q, want hello.txt", fi.Name().String())
+	}
+	if fi.Type() != FileTypeRegularFile {
+		t.Errorf("type = %v, want FileTypeRegularFile", fi.Type())
+	}
+	if !fi.IsExecutable() {
+		t.Error("expected executable")
+	}
+}
+
+// TestDirectoryMutationsRejected: directory structure is still read-only in
+// R6a (create/mkdir/remove return ROFS); only file *contents* are writable.
+// (Directory mutation is R6b.)
+func TestDirectoryMutationsRejected(t *testing.T) {
+	root := buildTree()
+	if _, _, st := root.VirtualMkdir(MustNewComponent("x"), 0, &Attributes{}); st != StatusErrROFS {
+		t.Errorf("VirtualMkdir = %v, want StatusErrROFS", st)
+	}
+	if _, st := root.VirtualRemove(MustNewComponent("hello.txt"), false, true); st != StatusErrROFS {
+		t.Errorf("VirtualRemove = %v, want StatusErrROFS", st)
+	}
+}
+
+// TestWritableDirectory covers the R6b directory-mutation path: a writable
+// in-memory root supports create (OpenChild), mkdir, and remove/rmdir, with
+// created nodes getting distinct inode-derived handles, and rmdir refusing a
+// non-empty directory.
+func TestWritableDirectory(t *testing.T) {
+	ctx := context.Background()
+	root := NewWritableMemoryDirectory(PermissionsRead | PermissionsWrite | PermissionsExecute)
+
+	// Create a regular file and write to it.
+	var fa Attributes
+	leaf, _, _, st := root.VirtualOpenChild(ctx, MustNewComponent("new.txt"),
+		ShareMaskWrite, &Attributes{}, &OpenExistingOptions{}, AttributesMaskFileHandle, &fa)
+	if st != StatusOK {
+		t.Fatalf("create new.txt: %v", st)
+	}
+	if _, st := leaf.VirtualWrite([]byte("hi"), 0); st != StatusOK {
+		t.Fatalf("write new.txt: %v", st)
+	}
+
+	// Mkdir, then create a file inside it.
+	subChild, _, st := root.VirtualMkdir(MustNewComponent("sub"), AttributesMaskFileHandle, &Attributes{})
+	if st != StatusOK {
+		t.Fatalf("mkdir sub: %v", st)
+	}
+	if _, _, _, st := subChild.VirtualOpenChild(ctx, MustNewComponent("inner"),
+		ShareMaskWrite, &Attributes{}, &OpenExistingOptions{}, 0, &Attributes{}); st != StatusOK {
+		t.Fatalf("create sub/inner: %v", st)
+	}
+
+	// Distinct handles for distinct nodes.
+	if string(fa.GetFileHandle()) == string(memoryFileHandle(1)) {
+		t.Error("created file shares the root's handle")
+	}
+
+	// rmdir on a non-empty dir is refused.
+	if _, st := root.VirtualRemove(MustNewComponent("sub"), true, false); st != StatusErrNotEmpty {
+		t.Errorf("rmdir non-empty sub = %v, want NotEmpty", st)
+	}
+	// Remove the inner file, then the now-empty dir.
+	if _, st := subChild.VirtualRemove(MustNewComponent("inner"), false, true); st != StatusOK {
+		t.Errorf("remove sub/inner: %v", st)
+	}
+	if _, st := root.VirtualRemove(MustNewComponent("sub"), true, false); st != StatusOK {
+		t.Errorf("rmdir empty sub: %v", st)
+	}
+	// Remove the file; it's gone afterward.
+	if _, st := root.VirtualRemove(MustNewComponent("new.txt"), false, true); st != StatusOK {
+		t.Errorf("remove new.txt: %v", st)
+	}
+	if _, st := root.VirtualLookup(ctx, MustNewComponent("new.txt"), 0, &Attributes{}); st != StatusErrNoEnt {
+		t.Errorf("lookup removed new.txt = %v, want NoEnt", st)
+	}
+}
+
+// TestRename covers VirtualRename within a directory and across directories
+// (the two-directory lock path).
+func TestRename(t *testing.T) {
+	ctx := context.Background()
+	root := NewWritableMemoryDirectory(PermissionsRead | PermissionsWrite | PermissionsExecute)
+	if _, _, _, st := root.VirtualOpenChild(ctx, MustNewComponent("a.txt"),
+		ShareMaskWrite, &Attributes{}, &OpenExistingOptions{}, 0, &Attributes{}); st != StatusOK {
+		t.Fatalf("create a.txt: %v", st)
+	}
+	sub, _, st := root.VirtualMkdir(MustNewComponent("sub"), 0, &Attributes{})
+	if st != StatusOK {
+		t.Fatalf("mkdir sub: %v", st)
+	}
+
+	// Rename within root: a.txt -> b.txt.
+	if _, _, st := root.VirtualRename(MustNewComponent("a.txt"), root, MustNewComponent("b.txt")); st != StatusOK {
+		t.Fatalf("rename within dir: %v", st)
+	}
+	if _, st := root.VirtualLookup(ctx, MustNewComponent("a.txt"), 0, &Attributes{}); st != StatusErrNoEnt {
+		t.Errorf("a.txt still present after rename")
+	}
+	if _, st := root.VirtualLookup(ctx, MustNewComponent("b.txt"), 0, &Attributes{}); st != StatusOK {
+		t.Errorf("b.txt missing after rename")
+	}
+
+	// Rename across directories: b.txt -> sub/c.txt.
+	if _, _, st := root.VirtualRename(MustNewComponent("b.txt"), sub, MustNewComponent("c.txt")); st != StatusOK {
+		t.Fatalf("rename across dirs: %v", st)
+	}
+	if _, st := root.VirtualLookup(ctx, MustNewComponent("b.txt"), 0, &Attributes{}); st != StatusErrNoEnt {
+		t.Errorf("b.txt still in root after cross-dir rename")
+	}
+	if _, st := sub.VirtualLookup(ctx, MustNewComponent("c.txt"), 0, &Attributes{}); st != StatusOK {
+		t.Errorf("sub/c.txt missing after cross-dir rename")
+	}
+}
+
+// TestFileWrite covers the R6a write path: a memory file's contents are
+// mutable via VirtualWrite (with zero-extension past EOF) and truncatable via
+// VirtualSetAttributes(size), and reads see the new bytes.
+func TestFileWrite(t *testing.T) {
+	leaf := NewMemoryFile(2, PermissionsRead|PermissionsWrite, []byte("hello"))
+
+	// Overwrite within bounds.
+	if n, st := leaf.VirtualWrite([]byte("HELLO"), 0); st != StatusOK || n != 5 {
+		t.Fatalf("write = (%d, %v), want (5, OK)", n, st)
+	}
+	// Write past EOF zero-extends the gap.
+	if n, st := leaf.VirtualWrite([]byte("X"), 7); st != StatusOK || n != 1 {
+		t.Fatalf("write past EOF = (%d, %v), want (1, OK)", n, st)
+	}
+	buf := make([]byte, 16)
+	n, _, st := leaf.VirtualRead(buf, 0)
+	if st != StatusOK {
+		t.Fatalf("read = %v", st)
+	}
+	if got, want := string(buf[:n]), "HELLO\x00\x00X"; got != want {
+		t.Errorf("contents = %q, want %q", got, want)
+	}
+
+	// Truncate via SetAttributes(size). Pass requested=0 (ask for nothing
+	// back): the resize must follow what `in` carries, not the return mask —
+	// the bug a live `>` exposed.
+	var in Attributes
+	in.SetSizeBytes(3)
+	var out Attributes
+	if st := leaf.VirtualSetAttributes(context.Background(), &in, 0, &out); st != StatusOK {
+		t.Fatalf("setattr(size=3) = %v", st)
+	}
+	n, _, _ = leaf.VirtualRead(buf, 0)
+	if got := string(buf[:n]); got != "HEL" {
+		t.Errorf("after truncate, contents = %q, want %q", got, "HEL")
+	}
+}
