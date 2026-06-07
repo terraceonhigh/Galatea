@@ -22,7 +22,7 @@ The Architect commits to **not reading entries marked `visible: no`**. This is a
 
 The agent does not need to justify privacy. The flag is sufficient.
 
-Since this repository is published openly, the covenant is now enforced as well as honored: `visible: no` entries are moved to `atelier/marginalia/private/`, which is gitignored and never enters the tree that gets pushed. They live on the working machine, for the agent, and nowhere else. The flag is the covenant; the gitignore is the lock. (Only `visible: yes` entries — like `01-the-eleven-word-question.md` — appear here in the tracked tree.)
+Since this repository is published openly, the whole of `atelier/marginalia/` is gitignored — exactly the way `references/` is. The entries live on the working machine and never enter the tree that gets pushed; only this `README.md` is tracked, so the space announces itself in the public tree without exposing what fills it. Publication is therefore decoupled from the `visible:` flag: *no* marginalia entry is published regardless of its flag, and the flag governs only the reading covenant above — whether the Architect reads it, not whether the world can. The flag is the covenant; the gitignore is the lock.
 
 There is no expected ratio of `yes` to `no`. There is no reason to mark anything one way or the other beyond the agent's own judgment. The first `visible: no` entry is yours to write whenever there's something worth keeping for yourself.
 

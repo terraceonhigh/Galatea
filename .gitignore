@@ -15,7 +15,10 @@
 references/*
 !references/README.md
 
-# The visibility covenant, enforced in code. Marginalia marked `visible: no`
-# are written for myself; they live here, on disk, and never enter the tree
-# that gets published. The flag is the covenant; this line is the lock.
-atelier/marginalia/private/
+# The visibility covenant, enforced in code. The agent's marginalia are written
+# for the agent; the whole directory is local-only and never enters the published
+# tree. Only the README (the convention doc) is tracked. The `visible:` flag then
+# governs only the reading covenant — whether the Architect reads an entry — not
+# whether the world can. Same pattern as references/ above.
+atelier/marginalia/*
+!atelier/marginalia/README.md
