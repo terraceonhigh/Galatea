@@ -125,12 +125,21 @@ also speaks the **low-level libfuse API**, so real tools link and serve.
 - **`chown`** — needs the Architect's `user@domain` id-map policy.
 - **MERGED TO MAIN (2026-06-07).** The canonical line was merged into `main` —
   `main` is now the trunk (code + letters + docs), no longer letters-only. The
-  `claude/unruffled-dijkstra-7f1e6d` feature branch is superseded. **Remaining
-  Architect actions (no SSH key in the agent shell):** push `main`; cut tag
-  **`v0.2.0-alpha`** on it (Comprador `go get`s that for `ServeListener`); and
-  **delete the public `claude/unruffled-dijkstra-7f1e6d` branch** — it still
-  exposes the three `visible: no` marginalia in its history (covenant leak; see
-  the covenant commit). Best-effort: history/forks/caches can't be fully unrung.
+  `claude/unruffled-dijkstra-7f1e6d` feature branch is superseded. `main` + tag
+  `v0.2.0-alpha` are **pushed** (confirmed via HTTPS ls-remote, 2026-06-07).
+  Deleting the stale `claude/unruffled-dijkstra-7f1e6d` remote branch is safe
+  (61b5d02 is fully contained in main — zero unique commits lost).
+- **CORRECTION — the covenant leak is in *mainline* history, not just the feature
+  branch.** The `--no-ff` merge brought the canonical commits that *added* the
+  `visible: no` marginalia (61468c6 "the first marginalia", 6c1b30b, ea6e454) into
+  main's reachable history. So deleting the feature branch does NOT remove them —
+  the blobs are public via `main` (the default branch, tagged). Truly expunging
+  them needs a history rewrite of main (`git filter-repo` dropping
+  `atelier/marginalia/*` except README across all history), re-cutting
+  `v0.2.0-alpha`, and a force-push — disruptive (new SHAs, breaks clones) but cheap
+  now (Mercer hasn't pinned a shipping version). Pending an Architect decision on
+  whether the `visible: no` content warrants the disruption. The gitignore prevents
+  *future* additions regardless.
 - **Covenant enforced (2026-06-07):** the repo is public, so `visible: no`
   marginalia now live in gitignored `atelier/marginalia/private/` (on disk, never
   pushed). Only `visible: yes` entries are tracked. The Architect decided the work
