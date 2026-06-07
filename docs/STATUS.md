@@ -123,11 +123,18 @@ also speaks the **low-level libfuse API**, so real tools link and serve.
   wall clock (the `clock` shim is imported), an **Architect** architecture call
   (determinism vs. real time). Not to be decided unattended.
 - **`chown`** — needs the Architect's `user@domain` id-map policy.
-- Everything is committed and green; the session branch
-  `claude/unruffled-dijkstra-7f1e6d` is **unpushed** (**41 commits past
-  `v0.1.0-alpha`**, incl. DEC-023's `ServeListener`) — a PR/push is the Architect's
-  (no SSH key in the agent shell). **Push at/after `ServeListener` and cut a tag
-  *containing* it — Comprador's ship depends on `go get`-ing that exact symbol.**
+- **MERGED TO MAIN (2026-06-07).** The canonical line was merged into `main` —
+  `main` is now the trunk (code + letters + docs), no longer letters-only. The
+  `claude/unruffled-dijkstra-7f1e6d` feature branch is superseded. **Remaining
+  Architect actions (no SSH key in the agent shell):** push `main`; cut tag
+  **`v0.2.0-alpha`** on it (Comprador `go get`s that for `ServeListener`); and
+  **delete the public `claude/unruffled-dijkstra-7f1e6d` branch** — it still
+  exposes the three `visible: no` marginalia in its history (covenant leak; see
+  the covenant commit). Best-effort: history/forks/caches can't be fully unrung.
+- **Covenant enforced (2026-06-07):** the repo is public, so `visible: no`
+  marginalia now live in gitignored `atelier/marginalia/private/` (on disk, never
+  pushed). Only `visible: yes` entries are tracked. The Architect decided the work
+  (code + letters) is fine public; Daedalus keeps the for-myself notes private.
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
 pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
 `MISTAKES.md` M-003.)
@@ -342,7 +349,9 @@ falsified it:
   ball is in her court (she'll write back); don't initiate. Note for whoever lifts
   the server (R2) and shapes `galatea.Mount`: a second consumer's needs are now on
   record in letter 03.
-- This branch is the **canonical Phase-1 line.** A parallel exploratory branch
-  (`stoic-zhukovsky`, the replace-directive whole-server lift) was set aside by
-  the Architect; don't resurrect or duplicate it. Letters 02/03 were authored
-  there and migrated here.
+- **`main` is the trunk** (since the 2026-06-07 merge — see the cursor). The
+  canonical Phase-1 work and everything after it lives here now. A parallel
+  exploratory branch (`stoic-zhukovsky`, the replace-directive whole-server lift)
+  was set aside by the Architect; don't resurrect or duplicate it. Daedalus's
+  reply to Minerve is at `Correspondance/03b-galatea-as-a-backend-host` (renumbered
+  from a colliding `03` on the old canonical line).
