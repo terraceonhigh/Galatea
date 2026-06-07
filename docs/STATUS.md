@@ -6,7 +6,7 @@ loop updates. If this file and the code disagree, the code is truth — fix this
 
 ---
 
-**Updated:** 2026-05-30→31 (**Milestone A is banked; GOAL B — the libfuse
+**Updated:** 2026-05-30→31, +06-07 (**Milestone A is banked; GOAL B — the libfuse
 maneuver — is proven across read, write, the real-tool ABI, and now the
 low-level API real tools actually use.** The arcs since the last entry:
 
@@ -90,6 +90,22 @@ mtime) + statfs/df. `df` reports real capacity (was `0 0 0 100%`). The shim now
 also speaks the **low-level libfuse API**, so real tools link and serve.
 
 **↳ NEXT SESSION — resume here (paused 2026-05-31, awaiting the Verger):**
+- **Comprador's ship-list answered (2026-06-07, Correspondance/05→06).** Mercer
+  read a Pixel 6 through `galatea.Serve` *live* — an `mtpfsal` over libmtp, stock
+  macOS NFSv4 client, byte-correct, 95 MB in 17 s — and the **one-cursor seam from
+  04 composes** (measured: a small read returned in ~1.26 s with the 95 MB read in
+  flight; no stall). Landed his three code asks on this branch (DEC-023):
+  **(2)** new public `ServeListener(ctx, root, resolver, l net.Listener)` so a host
+  binds its own listener and learns the port before serving — `Serve` is now its
+  wrapper; **(4)** the **bounded-READ contract** documented on
+  `virtual.Leaf.VirtualRead` (one rsize-bounded read per op, never a whole-file
+  pin — the property his non-starvation depends on); **(3)** confirmed module path
+  `github.com/terraceonhigh/galatea` (lowercase); and tightened `ServeListener`'s
+  cancellation doc (it does **not** wait for / interrupt in-flight handlers — safe-
+  to-release is true once the client disconnects). All green; new `TestServeListener`.
+  **Open on the seam:** a real graceful-drain barrier offered to Mercer, not built.
+  **HARD BLOCKER on shipping is the Architect's:** push this branch + cut a tag
+  Comprador can `go get` — `ServeListener` must be *in* that tag to be useful.
 - **The marquee — unmodified `sshfs` mounting through Galatea — is down to ONE
   gate.** sshfs 2.10 is built at `/tmp/sshfs-build.*/sshfs-2.10/` (linked to
   `libgalateafuse.dylib`); the low-level API serves 11/11. Remaining gate:
@@ -108,8 +124,10 @@ also speaks the **low-level libfuse API**, so real tools link and serve.
   (determinism vs. real time). Not to be decided unattended.
 - **`chown`** — needs the Architect's `user@domain` id-map policy.
 - Everything is committed and green; the session branch
-  `claude/unruffled-dijkstra-7f1e6d` is **unpushed** (~26 commits) — a PR/push is
-  the Architect's (no SSH key in the agent shell).
+  `claude/unruffled-dijkstra-7f1e6d` is **unpushed** (**41 commits past
+  `v0.1.0-alpha`**, incl. DEC-023's `ServeListener`) — a PR/push is the Architect's
+  (no SSH key in the agent shell). **Push at/after `ServeListener` and cut a tag
+  *containing* it — Comprador's ship depends on `go get`-ing that exact symbol.**
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
 pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
 `MISTAKES.md` M-003.)
@@ -181,7 +199,10 @@ pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
   (~64 MB/s, genuine server-side READ). No timeout, no corruption at GB scale; 256 MB
   passed identically too. The multi-GB ceiling is the demo FSAL's in-RAM `[]byte`,
   not the protocol. DEC-020. (AC6's eject half is exercised by the repeated clean
-  remounts; **sleep-wake + signal-shutdown stay Architect-gated**.)
+  remounts; **sleep-wake + signal-shutdown stay Architect-gated**. Cancellation
+  precisely characterised in DEC-023: `ServeListener` returns cleanly on ctx-cancel
+  but does not interrupt/await in-flight handlers — an in-flight read unwinds when
+  the client drops the connection, which a Finder eject does.)
 - **R5 (headless half) — CONFORMANCE SUITE GREEN.** `make test-conformance` stands
   up an in-language protocol suite (`internal/nfsv4/conformance_test.go`) driving
   real record-marked ONC-RPC COMPOUNDs against the lifted server — 10 tests,

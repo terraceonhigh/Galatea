@@ -1033,3 +1033,59 @@ its own `virtual.Directory` + `HandleResolver`, and mount on macOS with the
 standard `mount_nfs` recipe. The interface is no longer the only public seam; the
 mount is too. Live-verified: the refactored CLI still serves/mounts/reads, clean
 umount. `serve_test.go` guards the lifecycle.
+
+## DEC-023 — `ServeListener` + the bounded-READ contract, from Comprador's live MTP findings
+
+**Date:** 2026-06-07 · **Status:** accepted (built, green) · **Prompted by:**
+Mercer's Correspondance/05 — Comprador read a Pixel 6 through `galatea.Serve`
+live (an `mtpfsal` over libmtp, mounted by the stock macOS NFSv4 client, byte-
+correct, a 95 MB file in 17 s) and returned a short list of what Galatea needs so
+the integration can ship. This entry records the three of those that are code on
+our side; item 1 (push + tag) is the Architect's, and the licensing shape is a
+separate conversation.
+
+**1. `ServeListener(ctx, root, resolver, l net.Listener) error` (new public API).**
+Comprador must learn its bound port *before* serving — it prints `PORT=N` for the
+Swift menu-bar app to mount against — but `Serve` does its own `net.Listen` and
+never reports the address. With only `Serve`, the host has to probe-bind
+`127.0.0.1:0`, read the port, close, and relisten: a real close-and-relisten race.
+The fix mirrors `net/http`'s `Serve(l net.Listener)`: bind once, read `l.Addr()`,
+hand us the listener. `Serve` is now the convenience wrapper
+(`net.Listen(addr)` → `ServeListener`), so Stepford's existing `Serve` call is
+unchanged. `ServeListener` takes ownership of the listener and closes it on
+return. `serve_test.go`'s `TestServeListener` proves the port is observable before
+serving and that the socket is released afterwards (rebind succeeds).
+
+**2. The bounded-READ contract, documented on `virtual.Leaf.VirtualRead`.** Mercer
+funnels every device-touching FSAL call onto one libmtp session goroutine and
+feared a multi-minute read would wedge the server's per-open-owner sequencing or
+starve other operations. It doesn't — he measured a small read of a different file
+returning in ~1.26 s with a 95 MB read in flight. The reason is structural and
+worth protecting: the READ handler (`nfs40_program.go` / `nfs41_program.go`) issues
+**exactly one `VirtualRead(buf, offset)` per NFSv4 READ op**, `len(buf)` bounded by
+the client's rsize — no readahead, no coalescing, no whole-file pin (verified by
+grep: the only "readahead" symbols in the tree are the darwin mount-flag protocol
+constant, not server logic). So a globally-serialised backend interleaves chunks
+and never head-of-line-blocks. A future readahead/whole-file optimisation would
+silently reintroduce exactly the JUKEBOX-era stall for such backends; the doc now
+states this is a contract that must stay opt-in, never the default.
+
+**3. Cancellation semantics tightened (doc only).** Mercer asked us to confirm
+`Serve` unwinds cleanly on ctx-cancel mid-read. It does — returns nil, no double-
+close, no wedge — but the old doc's "lets in-flight connections drain" overclaimed:
+`rpcserver.HandleConnection` roots its own `context.Background()` errgroup, so
+ctx-cancel does **not** interrupt an in-flight request, and `ServeListener` does
+**not** wait for in-flight connection goroutines before returning. An in-flight
+handler completes its current bounded op and unwinds only when the kernel client
+closes the TCP connection (which a Finder eject does). Consequence for a single-
+cursor backend: "safe to release the device" is true once the client has
+disconnected, not at the instant `ServeListener` returns. The `ServeListener` doc
+now states this precisely instead of implying a synchronous drain. A real graceful-
+drain barrier (track in-flight conns; optionally plumb ctx into `HandleConnection`
+to interrupt) is a larger change into the lifted server's connection lifecycle and
+sits on the Galatea↔Comprador seam — offered to Mercer as a follow-up, not imposed
+here.
+
+**Module path confirmed (Mercer's item 3):** `go.mod` declares
+`github.com/terraceonhigh/galatea` (lowercase) — that is the import path the pushed
+module will carry, repo capitalisation `Galatea` notwithstanding.

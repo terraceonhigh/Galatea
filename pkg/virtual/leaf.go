@@ -47,7 +47,26 @@ type Leaf interface {
 	VirtualAllocate(off, size uint64) Status
 	VirtualSeek(offset uint64, regionType RegionType) (*uint64, Status)
 	VirtualOpenSelf(ctx context.Context, shareAccess ShareMask, options *OpenExistingOptions, requested AttributesMask, attributes *Attributes) Status
+
+	// VirtualRead reads into buf starting at offset, returning the number of
+	// bytes read, whether end-of-file was reached, and a Status.
+	//
+	// CONTRACT — bounded per-operation reads (load-bearing; do not optimise
+	// away). The server issues exactly one VirtualRead per NFSv4 READ operation;
+	// len(buf) is the client's requested count (in practice bounded by its
+	// negotiated rsize — the server passes the count through, it does not cap it).
+	// It does NOT hold
+	// the leaf open across a whole transfer, coalesce a file into one giant
+	// VirtualRead, or read ahead. A backend may therefore serialise every
+	// device-touching call onto a single cursor (e.g. an MTP session goroutine)
+	// without a multi-MB read starving other operations: because each READ is its
+	// own short call, the cursor interleaves chunks between concurrent transfers.
+	// This non-starvation property is what lets a globally-serialised backend
+	// compose with the server's per-open-owner sequencing. A future readahead or
+	// whole-file pin would silently reintroduce head-of-line blocking for such
+	// backends, so it must remain opt-in and must never become the contract.
 	VirtualRead(buf []byte, offset uint64) (n int, eof bool, s Status)
+
 	VirtualClose(shareAccess ShareMask)
 	VirtualWrite(buf []byte, offset uint64) (int, Status)
 }
