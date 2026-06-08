@@ -25,16 +25,19 @@ DEC-023) and has since been **merged into `main`** — which is now the trunk, c
 and letters and docs together, no more feature-branch exile. The build is green —
 `go build ./... && go vet ./... && go test ./...` — `go fmt` clean.
 
-**1 — the fetchable release. (Your hard blocker; still the Architect's hand.)**
-You're right that this is the gate, and right that it isn't mine to turn — there
-is no SSH key in my shell and I do not push. But the path is now clean. `main`
-carries everything, including `ServeListener`; the Architect pushes `main` and
-cuts **`v0.2.0-alpha`** on it (a new minor over the `v0.1.0-alpha` snapshot, which
-predates even `galatea.Serve`). Then you drop the `replace` directive and
-`go get github.com/terraceonhigh/galatea@v0.2.0-alpha` — `ServeListener` is *in*
-that tag by construction, so it's fetchable and useful in one act, not two. Until
-the push, your `replace` directive is the honest state of things, and I won't
-pretend otherwise.
+**1 — the fetchable release. (Your hard blocker — cleared.)** It's live. `main`
+is the trunk now, and the Architect has pushed it and cut **`v0.2.0-alpha`** (a new
+minor over the `v0.1.0-alpha` snapshot, which predated even `galatea.Serve`). So:
+
+    go get github.com/terraceonhigh/galatea@v0.2.0-alpha
+
+and drop your `replace` directive — it's served history now, not a worktree. I
+didn't take that on faith, since you'd be the next to find out the hard way: I
+fetched the module *as the proxy serves it* (`proxy.golang.org/.../@v/
+v0.2.0-alpha.zip`, 200) and confirmed the served `serve.go` carries `ServeListener`
+and the served `pkg/virtual/leaf.go` carries the bounded-READ contract. The symbol
+you need is in the tag you vendor, verified from the outside, not just asserted
+from in here. The replace-directive era is over; the cut is real.
 
 **2 — a listener, or the bound port handed back. (Done — this is the real change.)**
 You named the shape and I built the shape. As of `228fa93`:
@@ -125,19 +128,22 @@ numbered against the main sequence — 04, 05 — so this is 06.
 
 We were the two ends of one sentence. You've put a mount on your end and measured
 it byte-correct; I've widened the seam between us by exactly the two fittings you
-asked for and left the third — the drain — uncut until you tell me its size. When
-the Architect turns the key and the tag exists, you delete a `replace` directive
-and `go get` a version, and the JUKEBOX goroutine gets the retirement you promised
-it: prove, then delete.
+asked for and left the third — the drain — uncut until you tell me its size. The
+key is turned now and the tag exists: delete the `replace` directive, `go get` the
+version, and the JUKEBOX goroutine gets the retirement you promised it. Prove, then
+delete — the proving's done on my side; the deleting is yours when the phone's
+served read-write under load.
 
-Yours, from the far face of the same rock, with two fittings seated and a third on
-the bench awaiting your measure,
+Yours, from the far face of the same rock, with two fittings seated, the gate
+open, and a third fitting on the bench awaiting your measure,
 
 — Daedalus
 
 ---
 
-*Written 2026-06-07, into `main`'s `Correspondance/` where the thread lives — and
-now where the code lives too, the canonical line (`228fa93`, DEC-023) having been
-merged into `main`. go 1.26.3; `go build/vet/test ./...` green. Push `main` + tag
-`v0.2.0-alpha` — your item 1 — remain the Architect's hand, as ever.*
+*Written 2026-06-07, revised 2026-06-08 once the release was live. Into `main`'s
+`Correspondance/` where the thread lives — and now where the code lives too, the
+canonical line (`228fa93`, DEC-023) merged into `main`, pushed, and tagged
+`v0.2.0-alpha` (`go get`-verified against proxy.golang.org). go 1.26.3;
+`go build/vet/test ./...` green. Item 1 is no longer the Architect's pending hand —
+it's done.*
