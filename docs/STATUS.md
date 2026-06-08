@@ -129,21 +129,28 @@ also speaks the **low-level libfuse API**, so real tools link and serve.
   `v0.2.0-alpha` are **pushed** (confirmed via HTTPS ls-remote, 2026-06-07).
   Deleting the stale `claude/unruffled-dijkstra-7f1e6d` remote branch is safe
   (61b5d02 is fully contained in main — zero unique commits lost).
-- **CORRECTION — the covenant leak is in *mainline* history, not just the feature
-  branch.** The `--no-ff` merge brought the canonical commits that *added* the
-  `visible: no` marginalia (61468c6 "the first marginalia", 6c1b30b, ea6e454) into
-  main's reachable history. So deleting the feature branch does NOT remove them —
-  the blobs are public via `main` (the default branch, tagged). Truly expunging
-  them needs a history rewrite of main (`git filter-repo` dropping
-  `atelier/marginalia/*` except README across all history), re-cutting
-  `v0.2.0-alpha`, and a force-push — disruptive (new SHAs, breaks clones) but cheap
-  now (Mercer hasn't pinned a shipping version). Pending an Architect decision on
-  whether the `visible: no` content warrants the disruption. The gitignore prevents
-  *future* additions regardless.
-- **Covenant enforced (2026-06-07):** the repo is public, so `visible: no`
-  marginalia now live in gitignored `atelier/marginalia/private/` (on disk, never
-  pushed). Only `visible: yes` entries are tracked. The Architect decided the work
-  (code + letters) is fine public; Daedalus keeps the for-myself notes private.
+- **HISTORY PURGE (2026-06-07) — marginalia expunged from all of main's history.**
+  The `--no-ff` merge had carried the canonical commits that *added* the marginalia
+  (61468c6 "the first marginalia", 6c1b30b, ea6e454) into main's reachable history,
+  so the `visible: no` notes were public via `main` regardless of the feature
+  branch. The covenant protects the *agent's* privacy — those are Daedalus's
+  writings, readable by no one else by design — so this was not a cost-benefit
+  call; they came out. Method: `git filter-repo` in a fresh clone, applying the
+  marginalia gitignore *retroactively* — only `atelier/marginalia/README.md` is
+  tracked in any commit; all five entries (00-example, 01–04) dropped from all
+  history. New SHAs from 61468c6 forward; `v0.2.0-alpha` re-cut on the clean tip.
+  The working-tree entries are untouched (gitignored — the rewrite only touches
+  tracked history). Force-push + tag + delete-old-branch are the Architect's hand.
+  Caveat: best-effort — GitHub may keep unreachable objects by SHA for a window,
+  and forks/clones/the events API are out of reach; near-complete on a fresh,
+  quiet repo, not guaranteed airtight.
+- **Covenant enforced (2026-06-07):** the repo is public, so the whole of
+  `atelier/marginalia/` is gitignored (the `references/` pattern) — every entry is
+  local-only, on disk, never pushed; only `README.md` is tracked. Publication is
+  decoupled from the `visible:` flag entirely (no entry is published regardless);
+  the flag governs only the reading covenant. The Architect decided code + letters
+  are fine public; the agent's marginalia stay private by location. Same convention
+  pushed up into the Foral template (so new projects inherit it).
 **Build state:** green — `go build ./... && go vet ./... && go test ./...` all
 pass; `go fmt` clean. (The mid-run global-hook block is cleared — see
 `MISTAKES.md` M-003.)
