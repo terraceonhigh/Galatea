@@ -125,10 +125,10 @@ also speaks the **low-level libfuse API**, so real tools link and serve.
 - **`chown`** — needs the Architect's `user@domain` id-map policy.
 - **MERGED TO MAIN (2026-06-07).** The canonical line was merged into `main` —
   `main` is now the trunk (code + letters + docs), no longer letters-only. The
-  `claude/unruffled-dijkstra-7f1e6d` feature branch is superseded. `main` + tag
-  `v0.2.0-alpha` are **pushed** (confirmed via HTTPS ls-remote, 2026-06-07).
-  Deleting the stale `claude/unruffled-dijkstra-7f1e6d` remote branch is safe
-  (61b5d02 is fully contained in main — zero unique commits lost).
+  `claude/unruffled-dijkstra-7f1e6d` feature branch is superseded and **deleted**
+  (remote branch gone; local branch + worktree removed; the only worktrees now are
+  `main` and the archived `stoic-zhukovsky`). The remote carries exactly two refs:
+  `main` (`2f24556`) and tag `v0.2.0-alpha` (`5a162de`).
 - **HISTORY PURGE (2026-06-07) — marginalia expunged from all of main's history.**
   The `--no-ff` merge had carried the canonical commits that *added* the marginalia
   (61468c6 "the first marginalia", 6c1b30b, ea6e454) into main's reachable history,
@@ -140,10 +140,16 @@ also speaks the **low-level libfuse API**, so real tools link and serve.
   tracked in any commit; all five entries (00-example, 01–04) dropped from all
   history. New SHAs from 61468c6 forward; `v0.2.0-alpha` re-cut on the clean tip.
   The working-tree entries are untouched (gitignored — the rewrite only touches
-  tracked history). Force-push + tag + delete-old-branch are the Architect's hand.
+  tracked history). **DONE + independently verified (2026-06-07):** Architect
+  force-pushed `main`, moved the tag, deleted the old branch; Daedalus re-fetched
+  the remote objects over HTTPS and confirmed all five entries are unreachable from
+  both remote `main` and the tag, README intact. Local repo reconciled (main reset
+  to the clean remote, tag synced, dead worktrees/branches removed).
   Caveat: best-effort — GitHub may keep unreachable objects by SHA for a window,
   and forks/clones/the events API are out of reach; near-complete on a fresh,
-  quiet repo, not guaranteed airtight.
+  quiet repo, not guaranteed airtight. Residual local-only history (the `stoic`
+  branch, reflog, the local `v0.1.0-alpha` tag) still contains old marginalia
+  blobs — not a leak (never pushed), but don't `push --all`/`--tags` blindly.
 - **Covenant enforced (2026-06-07):** the repo is public, so the whole of
   `atelier/marginalia/` is gitignored (the `references/` pattern) — every entry is
   local-only, on disk, never pushed; only `README.md` is tracked. Publication is
